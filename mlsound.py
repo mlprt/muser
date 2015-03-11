@@ -6,9 +6,9 @@ import os
 class Soundwrite:
   """ Prepare a file stream (self.out) for writing. """
   def __init__(self, rate, chans=1, fmt="wav", enc="pcm24", name="sound"):
-    self._update(rate, chans, fmt, enc, name)
+    self.__update(rate, chans, fmt, enc, name)
   
-  def _update(self, rate=None, chans=None, fmt=None, enc=None, name=None):
+  def __update(self, rate=None, chans=None, fmt=None, enc=None, name=None):
     """ Update any changed variables, and create new self.out instance """
     if not(rate==None):  self.rate     = rate
     if not(chans==None): self.chans    = chans
@@ -23,11 +23,11 @@ class Soundwrite:
 
   def new_fmt(self, fmt, enc=None):
     """Change file format."""
-    self._update(fmt=fmt, enc=enc)
+    self.__update(fmt=fmt, enc=enc)
   
   def new_name(self, name):
     """Change file name."""
-    self._update(name=name)
+    self.__update(name=name)
     
 def reveal_formats():
   for format in alab.available_file_formats():
@@ -37,30 +37,91 @@ def reveal_formats():
     print ""
     
 class Note:
-  """ Single note, with duration, frequency, sampling frequency. 
+  """ Single note. 
   """
-  def __init__(self, dur=None, freq=None, rate=None):
-    if (dur=None and freq=)
-    self.dur, self.freq = (dur, freq) # duration and pitch
-    self.rate           = rate    # sampling rate, Hz
+  def __init__(self, dur=None, freq=None, amp=None):
+    self.dur   = dur  # duration
+    self.freq  = freq # pitch
+    self.amp   = amp  # amplitude/volume
   
-  def clone(self):
-    class Clone(self):
-      pass
-    return Clone
     
 class Chord:
   """ Collection of Note instances.
+      Currently using tuple self.notes
       Methods for analysis and alteration (???)
   """
-  def __init__(self):
-    pass
+  def __init__(self, notes=[]):
+    self.notes = ()
+    self.addnotes(notes)
   
-  def weight(self, ):
+  def addnotes(self, notes):
+    """Currently shares existing Note objects, does not copy them."""
+    if isinstance(notes, dict): 
+      for key in notes:   
+        self.__addnote(notes[key])
+    else isinstance(notes, (list, tuple):                       
+      for note in notes:  
+        self.__addnote(note)
+    else:                   
+      self.__addnote(notes)
+        
+  def __addnote(self, note):
+    if isinstance(note, Note):  
+      self.notes += (note,)
+    elif isinstance(note, (list,tuple,dict)):    
+      self.addnotes(note)
+    else:
+      print("Object of " + str(type(note)) + " was not added to Chord.")
+  
+  def delnotes(self, notes):
+    pass
+    
+  def tofile(self, out):
     try:
-      pass
-    except:
-      pass
+      assert isinstance(out, alab.Sndfile)
+      for note in self.notes:
+        out.write_frames(n)
+    except AssertionError:
+      print("Chord not written. Method tofile takes Sndfile object.")
+    
+  def weight(self, rule, switch=True):
+    """ Takes a weighting function or a set of weights,
+        and alters the amplitude of each note in the chord. 
+        
+        switch=True (default): the weighting function is
+        passed the index of each note.
+        
+        switch=False: the weighting function is passed the note's frequency. 
+    """
+    if hasattr(rule, "__call__"):
+      try:
+        for i in range(len(self.notes)):
+          if switch:
+            result = rule(i)
+          else:
+            result = rule(self.notes[i].freq)
+          # can only be weighted by integer or float
+          assert isinstance(result, (int, float))
+          # REPLACES current amplitude (what about factor weight?)
+          self.notes[i].amp = rule(i)
+          
+      except TypeError, AssertionError:
+        print("Functions given to Chord's weight method must accept a single argument and return a single number.")
+    
+    elif isinstance(rule, (list, tuple, dict)) and len(rule)==len(self.notes):
+      for i in rule:
+        self.notes[i].amp = rule[i]
+    
+    else:
+      print("Chord could not be weighted. ")
+    # could also add another case for dict 2D list/tuple weighting a subset of notes
+
+chord = [Chord(), Chord()]
+notes = []
+for i in range(1,17):
+  notes.append(Note(1,220*i,1))
+  chord[0].addnotes(notes[-1])
+chord[1].addnotes(notes)
 
 sdur = 2
 sfreq = 48000
@@ -68,7 +129,7 @@ fund = 220
 fname = "test"
 ffmt = "flac"
 
-if os.path.isfile(fname+"."+ffmt): os.remove(fname+ffmt)
+if os.path.isfile(fname+"."+ffmt): os.remove(fname+"."+ffmt)
 
 f = Soundwrite(sfreq, fmt=ffmt, name=fname)
 
