@@ -158,13 +158,13 @@ def chord_test(base,fname="test",ffmt="flac",srate=48000):
   # Weighting function for overtones in each note (higher y == less weight to higher tones)
   w_fac = 2.5
   #spectrum = lambda x: (x+1)**(-w_fac) 
-  #spectrum = lambda x: 10**(-x**2)  #synth-y 
-  #spectrum = lambda x: np.tan(2*np.pi*x)*2**(-x)  #synth-y
   spectrum = lambda x: 10**(-x**2)
   interval = 1.05946 
-  nbases = [interval**i for i in range(13)]
-  osc = [nbases[0],nbases[-1]]
-  nbases += osc + osc + osc
+  nbases = [interval**i for i in [0,3,7,12,7,3]]
+  nbases *= 4
+  #nbases = [interval**i for i in range(13)]
+  #osc = [nbases[0],nbases[-1]]
+  #nbases += osc + osc + osc
   
   series_len = 1
   n_series = len(nbases)
@@ -174,7 +174,8 @@ def chord_test(base,fname="test",ffmt="flac",srate=48000):
     for j in range(1,series_len+1): # Number of notes played consecutively
       # Add note
       chords.append(Chord([Note(1,nbase*j*i,1) for i in range(1,note_tones+1)]))
+      #chords[-1].addnotes(Note(1,nbase*0.5,1)) # doesn't work, adds to the END
       chords[-1].weight(spectrum)
-      chords[-1].tofile(fout.out,0.25)
+      chords[-1].tofile(fout.out,0.15)
 
-chord_test(110)
+chord_test(55)
