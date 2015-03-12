@@ -59,7 +59,7 @@ class Chord:
     if isinstance(notes, dict): 
       for key in notes:   
         self.__addnote(notes[key])
-    else isinstance(notes, (list, tuple):                       
+    elif isinstance(notes, (list, tuple)):                       
       for note in notes:  
         self.__addnote(note)
     else:                   
@@ -76,11 +76,14 @@ class Chord:
   def delnotes(self, notes):
     pass
     
-  def tofile(self, out):
+  def tofile(self, out, dur):
+    nc = np.zeros(dur*out.samplerate)
+    nbase = np.linspace(0,dur,dur*out.samplerate)
     try:
       assert isinstance(out, alab.Sndfile)
       for note in self.notes:
-        out.write_frames(n)
+        nc += note.amp*np.sin(2*np.pi*note.freq*nbase)
+      out.write_frames(nc)
     except AssertionError:
       print("Chord not written. Method tofile takes Sndfile object.")
     
@@ -116,31 +119,17 @@ class Chord:
       print("Chord could not be weighted. ")
     # could also add another case for dict 2D list/tuple weighting a subset of notes
 
-chord = [Chord(), Chord()]
-notes = []
-for i in range(1,17):
-  notes.append(Note(1,220*i,1))
-  chord[0].addnotes(notes[-1])
-chord[1].addnotes(notes)
-
-sdur = 2
-sfreq = 48000
-fund = 220
+srate = 48000
 fname = "test"
-ffmt = "flac"
-
+ffmt = "wav"
 if os.path.isfile(fname+"."+ffmt): os.remove(fname+"."+ffmt)
+fout = Soundwrite(srate, fmt=ffmt, name=fname)
 
-f = Soundwrite(sfreq, fmt=ffmt, name=fname)
+nbase = 220 
 
-sample_base = np.linspace(0,sdur,sfreq*sdur)
+a_tones = []
 
-#for j in range(1,6):
-  #nc = np.zeros(sfreq*sdur)
-  #for i in range(1,16):
-    #n = np.sin(2*np.pi*i*fund*sample_base)
-    #nc += n/(i**(j)) # subtracting i%2 favors octaves most
-    ##f.out.write_frames(n)
-  #f.out.write_frames(nc)
-
-#f.out.write_frames(np.sin(2*np.pi*fund*sample_base))
+for j in range(9):
+  a_tones.append(Chord([Note(1,nbase*i,1) for i in range(1,j+1)]))
+  a_tones[-1].weight(lambda i: (i+1)**(-1))
+  a_tones[-1].tofile(fout.out,1)
