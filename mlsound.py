@@ -121,15 +121,17 @@ class Chord:
 
 srate = 48000
 fname = "test"
-ffmt = "wav"
+ffmt = "flac"
 if os.path.isfile(fname+"."+ffmt): os.remove(fname+"."+ffmt)
 fout = Soundwrite(srate, fmt=ffmt, name=fname)
 
 nbase = 220 
 
 a_tones = []
+otones = 8
 
-for j in range(9):
-  a_tones.append(Chord([Note(1,nbase*i,1) for i in range(1,j+1)]))
-  a_tones[-1].weight(lambda i: (i+1)**(-1))
-  a_tones[-1].tofile(fout.out,1)
+for k in range(1,10000):
+  for j in range(1,16):
+    a_tones.append(Chord([Note(1,nbase*j*i,1) for i in range(1,otones+1)]))
+    a_tones[-1].weight(lambda i: (i+1)**(-3))
+    a_tones[-1].tofile(fout.out,0.5/k)
