@@ -109,6 +109,7 @@ class Chord:
     if hasattr(rule, "__call__"):
       try:
         for i in range(len(self.notes)):
+         
           if switch:
             # pass index ("order" of note in chord) to weighting function
             result = rule(i)
@@ -118,6 +119,7 @@ class Chord:
             
           # *** could move the following material to a method in Note (?)
           # can only be weighted by integer or float
+          
           assert isinstance(result, (int, float))
           # REPLACES current amplitude (what about factor weight?)
           self.notes[i].amp = rule(i)
@@ -149,23 +151,30 @@ def chord_test(base,fname="test",ffmt="flac",srate=48000):
   if os.path.isfile(fname+"."+ffmt): os.remove(fname+"."+ffmt)
   # Create Audiolab class handler (audio file interface)
   fout = Soundwrite(srate, fmt=ffmt, name=fname)
-  
-  nbase = base 
+
   chords = []
   # Number of overtones in each SINGLE note
-  note_tones = 4   
+  note_tones = 16   
   # Weighting function for overtones in each note (higher y == less weight to higher tones)
-  w_fac = 3
-  spectrum = lambda x: (x+1)**(-w_fac) 
+  w_fac = 2.5
+  #spectrum = lambda x: (x+1)**(-w_fac) 
+  #spectrum = lambda x: 10**(-x**2)  #synth-y 
+  #spectrum = lambda x: np.tan(2*np.pi*x)*2**(-x)  #synth-y
+  spectrum = lambda x: 10**(-x**2)
+  interval = 1.05946 
+  nbases = [interval**i for i in range(13)]
+  osc = [nbases[0],nbases[-1]]
+  nbases += osc + osc + osc
   
-  series_len = 4
-  n_series = 5
+  series_len = 1
+  n_series = len(nbases)
   
-  for k in range(1,n_series+1): # number of series played consecutively
+  for k in range(n_series): # number of series played consecutively
+    nbase = base*nbases[k]      # change in base note between series
     for j in range(1,series_len+1): # Number of notes played consecutively
       # Add note
       chords.append(Chord([Note(1,nbase*j*i,1) for i in range(1,note_tones+1)]))
       chords[-1].weight(spectrum)
       chords[-1].tofile(fout.out,0.25)
-    nbase *= 1.5      # change in base note between series
+
 chord_test(110)
