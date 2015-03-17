@@ -141,7 +141,7 @@ class Scale:
 
     def __init__(self, base, intonation="equal"):
         self.base = base
-        self.notes = [base]*12
+        self.notes = [base]*13
         self.__intone(intonation)        
         
     def __intone(self, intonation):
@@ -150,15 +150,15 @@ class Scale:
             # do not specify the base or the octave, but the notes between
             for i in range(len(self.notes)-1):
                 self.notes[i] = self.base*semitone**i
-                self.notes[-1] = 2*self.base
+            self.notes[-1] = 2*self.base
 
         elif intonation == "hindemith":
             #omitting Gb (only F# included) for now
-            ratios = [1, 4*(4/3)*(1/5), 3*(3/2)*(1/4), 6*(1/5), 5*(1/4),
-                        4*(1/3), 3*(3/2)*(5/4)*(1/4), 3*(1/2), 4*(2/5),
-                        5*(1/3), 4*(4/3)*(1/3), 5*(3/4)*(1/2), 2]  
+            ratios = [1., 4.*(4./3)*(1./5), 3.*(3./2)*(1./4), 6.*(1./5), 5.*(1./4),
+                        4.*(1./3), 3.*(3./2)*(5./4)*(1./4), 3.*(1./2), 4.*(2./5),
+                        5.*(1./3), 4.*(4./3)*(1./3), 5.*(3./4)*(1./2), 2.]
             for i in range(len(self.notes)):
-                self.notes[i] *= ratios
+                self.notes[i] *= ratios[i]
             
 
 def reveal_formats():
@@ -178,31 +178,36 @@ def chord_test(base,fname="test",ffmt="flac",srate=48000):
 
   chords = []
   # Number of overtones in each SINGLE note
-  note_tones = 8
+  note_tones = 16
   # Weighting function for overtones in each note (higher y == less weight to higher tones)
-  w_fac = 2.5
-  #spectrum = lambda x: (x+1)**(-w_fac) 
-  spectrum = lambda x: 10**(-x**2)
+  w_fac = 3
+  spectrum = lambda x: (x+3)**(-w_fac)
   
-  melody = [0,3,7,-1,7,3]  
+  melody = [0,3,0,4,0,5,0,7]  
+  durs = [0.5]*len(melody)
+  vols = [1]*len(melody)
   
   equal_scale = Scale(base, "equal")
   hind_scale = Scale(base, "hindemith")  
   
-  nbases = [equal_scale.notes[i] for i in melody]
-  print nbases
+  #print "Notes in the equal-temperament scale: ", " Hz, ".join(["%6.2f"%i for i in equal_scale.notes]), "Hz"
+  #print "Notes in the just scale of Hindemith: ", " Hz, ".join(["%6.2f"%i for i in hind_scale.notes]), "Hz"
+  
+  nbases = [hind_scale.notes[i] for i in melody]
   nbases *= 4
+  durs *= 4
+  vols *= 4
   
   series_len = 1
   n_series = len(nbases)
   
   for k in range(n_series): # number of series played consecutively
-    nbase = base*nbases[k]      # change in base note between series
+    nbase = nbases[k]      # change in base note between series
     for j in range(1,series_len+1): # Number of notes played consecutively
       # Add note
-      chords.append(Chord([Note(1,nbase*j*i,1) for i in range(1,note_tones+1)]))
+      chords.append(Chord([Note(1,nbase*j*i,vols[k]) for i in range(1,note_tones+1)]))
       #chords[-1].addnotes(Note(1,nbase*0.5,1)) # doesn't work, adds to the END
       chords[-1].weight(spectrum)
-      chords[-1].tofile(fout.out,0.15)
+      chords[-1].tofile(fout.out,durs[k])
 
-chord_test(55)
+chord_test(110)
