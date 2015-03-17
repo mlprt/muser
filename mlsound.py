@@ -5,8 +5,8 @@ import os
 
 class Soundwrite:
   """ Prepare a file stream (self.out) for writing. 
-      (Just a handler class for the Audiolab classes.) """
-  def __init__(self, rate, chans=1, fmt="wav", enc="pcm24", name="sound"):
+      (Handler class for the Audiolab classes.) """
+  def __init__(self, rate=48000, chans=1, fmt="wav", enc="pcm24", name="sound"):
     self.__update(rate, chans, fmt, enc, name)
   
   def __update(self, rate=None, chans=None, fmt=None, enc=None, name=None):
@@ -51,7 +51,7 @@ class Note:
     self.amp   = amp  # amplitude/volume
   
     
-class Chord:
+class Chord:  
   """ Collection of Note instances. """
   def __init__(self, notes=()):
     self.notes = ()      # Tuple? Any advantage at all? Numpy array? List?
@@ -137,6 +137,30 @@ class Chord:
     else:
       print("Chord could not be weighted. ")
 
+class Scale:
+
+    def __init__(self, base, intonation="equal"):
+        self.base = base
+        self.notes = [base]*12
+        self.__intone(intonation)        
+        
+    def __intone(self, intonation):
+        if intonation == "equal":
+            semitone = 1.05946
+            # do not specify the base or the octave, but the notes between
+            for i in range(len(self.notes)-1):
+                self.notes[i] = self.base*semitone**i
+                self.notes[-1] = 2*self.base
+
+        elif intonation == "hindemith":
+            #omitting Gb (only F# included) for now
+            ratios = [1, 4*(4/3)*(1/5), 3*(3/2)*(1/4), 6*(1/5), 5*(1/4),
+                        4*(1/3), 3*(3/2)*(5/4)*(1/4), 3*(1/2), 4*(2/5),
+                        5*(1/3), 4*(4/3)*(1/3), 5*(3/4)*(1/2), 2]  
+            for i in range(len(self.notes)):
+                self.notes[i] *= ratios
+            
+
 def reveal_formats():
   """ From Audiolab documentation. Print the available audio output formats and encodings."""
   for format in alab.available_file_formats():
@@ -154,17 +178,20 @@ def chord_test(base,fname="test",ffmt="flac",srate=48000):
 
   chords = []
   # Number of overtones in each SINGLE note
-  note_tones = 16   
+  note_tones = 8
   # Weighting function for overtones in each note (higher y == less weight to higher tones)
   w_fac = 2.5
   #spectrum = lambda x: (x+1)**(-w_fac) 
   spectrum = lambda x: 10**(-x**2)
-  interval = 1.05946 
-  nbases = [interval**i for i in [0,3,7,12,7,3]]
+  
+  melody = [0,3,7,-1,7,3]  
+  
+  equal_scale = Scale(base, "equal")
+  hind_scale = Scale(base, "hindemith")  
+  
+  nbases = [equal_scale.notes[i] for i in melody]
+  print nbases
   nbases *= 4
-  #nbases = [interval**i for i in range(13)]
-  #osc = [nbases[0],nbases[-1]]
-  #nbases += osc + osc + osc
   
   series_len = 1
   n_series = len(nbases)
