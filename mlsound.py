@@ -11,26 +11,24 @@ class Soundwrite:
   
   def __update(self, rate=None, chans=None, fmt=None, enc=None, name=None):
     """ Update any changed variables, and create new self.out instance """
-    
     # Only update variables that are specified
     # Allows functions new_fmt, new_name, etc. to all operate through here
-    if not(rate==None):  self.rate     = rate
-    if not(chans==None): self.chans    = chans
-    
-    if not(fmt==None and enc==None):
+    if rate:  
+      self.rate = rate
+    if chans: 
+      self.chans = chans
+    if fmt or enc:
       # New Audiolab Format instance needed if either new file format or encoding
-      self.fmt = alab.Format( self.fmt.file_format if (fmt==None) else fmt, 
-                              self.fmt.encoding    if (enc==None) else enc )
-    
-    if not(name==None and fmt==None):
+      self.fmt = alab.Format( self.fmt.file_format if not fmt else fmt, 
+                              self.fmt.encoding    if not enc else enc )
+    if name or fmt:
       # New filename needed if either new file format or name 
       # Handles redundant extensions and recovery of name from self.filename
-      new_name = os.path.splitext(self.filename if (name==None) else name)
-      new_fmt  = self.fmt.file_format if (fmt==None) else fmt
+      new_name = os.path.splitext(self.filename if not name else name)
+      new_fmt  = self.fmt.file_format if not fmt else fmt
+      self.filename = ("{}.{}".format(new_name[0], new_fmt))
       
-      self.filename = ( new_name[0] + "." + new_fmt)
-      
-      if not(new_name[1]==new_fmt or len(new_name[1])==0):
+      if not(new_name[1] == new_fmt or len(new_name[1]) == 0):
         print("\tFilename was specified with conflicting extension.\n\
         Discarded in favour of separately specified/existing extension.")
     
@@ -52,7 +50,6 @@ class Note:
     self.freq  = freq # pitch
     self.amp   = amp  # amplitude/volume
   
-    
 class Chord:  
   """ Collection of Note instances. """
   def __init__(self, notes=()):
@@ -86,14 +83,14 @@ class Chord:
     
   def tofile(self, out, dur):
     """ Write all Chord Notes to file, in superposition/summation with constant duration. """
-    nc = np.zeros(dur*out.samplerate)
-    nbase = np.linspace(0,dur,dur*out.samplerate)
+    nc = np.zeros(dur * out.samplerate)
+    nbase = np.linspace(0, dur, dur * out.samplerate)
     try:
       # Ensure a Sndfile instance is being used for writing. Is type-asserting halal?
       assert isinstance(out, alab.Sndfile)
       for note in self.notes:
         # Superposition each consecutive Note in the chord
-        nc += note.amp*np.sin(2*np.pi*note.freq*nbase)
+        nc += note.amp * np.sin(2 * np.pi * note.freq * nbase)
       out.write_frames(nc)
     except AssertionError:
       print("Chord not written. Method tofile takes Sndfile object.")
@@ -111,7 +108,6 @@ class Chord:
     if hasattr(rule, "__call__"):
       try:
         for i in range(len(self.notes)):
-         
           if switch:
             # pass index ("order" of note in chord) to weighting function
             result = rule(i)
@@ -121,7 +117,6 @@ class Chord:
             
           # *** could move the following material to a method in Note (?)
           # can only be weighted by integer or float
-          
           assert isinstance(result, (int, float))
           # REPLACES current amplitude (what about factor weight?)
           self.notes[i].amp *= result
@@ -129,7 +124,7 @@ class Chord:
       except TypeError, AssertionError:
         print("Functions given to Chord's weight method must accept a single argument and return a single number.")
     
-    elif isinstance(rule, (list, tuple, dict)) and len(rule)==len(self.notes):
+    elif isinstance(rule, (list, tuple, dict)) and len(rule) == len(self.notes):
       # Assign a sequence of appropriate length 
       # Is this necessary? could assume user is sane, the following code could easily be made not to break for short/long rule sequence
       # Could also allow for a specified subset to be weighted. Easier if labels/dict is implemented for Chord.
@@ -137,12 +132,11 @@ class Chord:
         self.notes[i].amp *= rule[i]
     
     else:
-      print("Chord could not be weighted. ")
+      print("Chord could not be weighted.")
 
 class Scale:
     """ 12-tone octave scale (from frequency base to 2*base)
         Intervening frequencies depend on chosen intonation/temperament.
-        
     """
     names = [u"A", u"B\u266D", u"B", u"C", u"D\u266D", u"D", u"E\u266D", u"E", u"F", u"G\u266D", u"G", u"A\u266D"]
     names_alt = [u"A", u"A\u266F", u"C\u266D", u"B\u266F", u"C\u266F", u"D", u"D\u266F", u"F\u266D", u"E\u266F", u"F\u266F", u"G", u"G\u266F"]
@@ -161,8 +155,8 @@ class Scale:
     def __unicode__(self):
         string = unicode("")
         for i in range(len(self.names)):
-            space = u"\n" if not((i+1)%3) else u"\t"
-            string += self.names[i].ljust(2, " ") + u"/%6.2f Hz" % self.notes[i] + space  
+            space = u"\t" if (i + 1) % 3 else u"\n"
+            string += u"{:<2}/{:6.2f} Hz{}".format(self.names[i], self.notes[i], space)  
         return string
     
     def tune(self, intonation):
@@ -172,9 +166,9 @@ class Scale:
         if intonation == "equal":
             semitone = 1.05946
             # do not specify the base or the octave, but the notes between
-            for i in range(len(self.notes)-1):
-                self.notes[i] = self.base*semitone**i
-            self.notes[-1] = 2*self.base
+            for i in range(len(self.notes) - 1):
+                self.notes[i] = self.base * semitone ** i
+            self.notes[-1] = 2 * self.base
 
         elif intonation == "Hindemith":
             #omitting Gb (only F# included) for now
@@ -190,8 +184,7 @@ class Scale:
         self.notes = [self.notes[i] for i in range(len(self.notes)) if not (i in exclusions)]
         
     def name(self, base_name):
-        if not (base_name == ""):
-            
+        if base_name:
             from collections import deque
             
             self.tonic = unicode(base_name).capitalize() 
@@ -203,25 +196,25 @@ class Scale:
             try:
                 tonic = Scale.names.index(self.tonic)
                 names_ = deque(Scale.names)
-                deque.rotate(names_,-tonic)
+                deque.rotate(names_, -tonic)
                 self.names = list(names_)
-                
             except ValueError:
                 print("The tonic could not be identified from the string ", base_name)
         
           
 def reveal_formats():
   """ From Audiolab documentation. Print the available audio output formats and encodings."""
-  for format in alab.available_file_formats():
-    print "File format %s is supported; available encodings are:" % format
-    for enc in alab.available_encodings(format):
-        print "\t%s" % enc
-    print ""
+  for fmt in alab.available_file_formats():
+    print("File format {} is supported; available encodings are:".format(fmt))
+    for enc in alab.available_encodings(fmt):
+        print("\t{}".format(enc))
+    print('')
 
-def chord_test(base, base_name="",fname="test",ffmt="flac",srate=48000):
+def chord_test(base, base_name="", fname="test", ffmt="flac", srate=48000):
   
   # Remove any file with the same name as the one that will be written
-  if os.path.isfile(fname+"."+ffmt): os.remove(fname+"."+ffmt)
+  if os.path.isfile("{}.{}".format(fname, ffmt)): 
+    os.remove("{}.{}".format(fname, ffmt))
   # Create Audiolab class handler (audio file interface)
   fout = Soundwrite(srate, fmt=ffmt, name=fname)
 
@@ -230,11 +223,12 @@ def chord_test(base, base_name="",fname="test",ffmt="flac",srate=48000):
   note_tones = 16
   # Weighting function for overtones in each note (higher y == less weight to higher tones)
   w_fac = 3
-  spectrum = lambda x: (x+3)**(-w_fac)
+  def spectrum(x): 
+    return (x + 3) ** (-w_fac)
   
-  melody = [0,3,0,4,0,5,0,7]  
-  durs = [0.5]*len(melody)
-  vols = [0.6,0.7,0.6,0.75,0.7,0.8,0.75,1]
+  melody = [0, 3, 0, 4, 0, 5, 0, 7]  
+  durs = [0.5] * len(melody)
+  vols = [0.6, 0.7, 0.6, 0.75, 0.7, 0.8, 0.75, 1]
   
   equal_scale = Scale(base, "equal")
   hind_scale = Scale(base, "Hindemith")  
@@ -252,11 +246,12 @@ def chord_test(base, base_name="",fname="test",ffmt="flac",srate=48000):
   
   for k in range(n_series): # number of series played consecutively
     nbase = nbases[k]      # change in base note between series
-    for j in range(1,series_len+1): # Number of notes played consecutively
+    for j in range(1, series_len + 1): # Number of notes played consecutively
       # Add note
-      chords.append(Chord([Note(1,nbase*j*i,vols[k]) for i in range(1,note_tones+1)]))
-      #chords[-1].addnotes(Note(1,nbase*0.5,1)) # doesn't work, adds to the END
+      chords.append(Chord([Note(1, nbase * j * i, vols[k]) for i in range(1, note_tones + 1)]))
+      #chords[-1].addnotes(Note(1, nbase * 0.5,1)) # doesn't work, adds to the END
       chords[-1].weight(spectrum)
-      chords[-1].tofile(fout.out,durs[k])
+      chords[-1].tofile(fout.out, durs[k])
 
-chord_test(110, base_name="A")
+#chord_test(110, base_name="A")
+
