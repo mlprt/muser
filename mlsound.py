@@ -1,7 +1,9 @@
-import scikits.audiolab as alab
+import os
+from collections import deque
 import numpy as np
 import Nsound as ns
-import os
+import scikits.audiolab as alab
+
 
 class Soundwrite:
   """ Prepare a file stream (self.out) for writing. 
@@ -124,7 +126,7 @@ class Chord:
       except TypeError, AssertionError:
         print("Functions given to Chord's weight method must accept a single argument and return a single number.")
     
-    elif isinstance(rule, (list, tuple, dict)) and len(rule) == len(self.notes):
+    elif hasattr(rule, '__iter__') and len(rule) == len(self.notes):
       # Assign a sequence of appropriate length 
       # Is this necessary? could assume user is sane, the following code could easily be made not to break for short/long rule sequence
       # Could also allow for a specified subset to be weighted. Easier if labels/dict is implemented for Chord.
@@ -141,7 +143,7 @@ class Scale:
     names = [u"A", u"B\u266D", u"B", u"C", u"D\u266D", u"D", u"E\u266D", u"E", u"F", u"G\u266D", u"G", u"A\u266D"]
     names_alt = [u"A", u"A\u266F", u"C\u266D", u"B\u266F", u"C\u266F", u"D", u"D\u266F", u"F\u266D", u"E\u266F", u"F\u266F", u"G", u"G\u266F"]
     
-    def __init__(self, base, intonation="equal", base_name="", exclusions=[]):
+    def __init__(self, base, intonation="equal", base_name="", exclusions=()):
         
         self.base = base
         self.notes = [base]*13
@@ -184,22 +186,20 @@ class Scale:
         self.notes = [self.notes[i] for i in range(len(self.notes)) if not (i in exclusions)]
         
     def name(self, base_name):
-        if base_name:
-            from collections import deque
+           
+        self.tonic = unicode(base_name).capitalize() 
             
-            self.tonic = unicode(base_name).capitalize() 
-            
-            if len(self.tonic) > 1:
-                self.tonic = self.tonic.replace("b", u"\u266D")
-                self.tonic = self.tonic.replace("#", u"\u266F")
-            
-            try:
-                tonic = Scale.names.index(self.tonic)
-                names_ = deque(Scale.names)
-                deque.rotate(names_, -tonic)
-                self.names = list(names_)
-            except ValueError:
-                print("The tonic could not be identified from the string ", base_name)
+        if len(self.tonic) > 1:
+            self.tonic = self.tonic.replace("b", u"\u266D")
+            self.tonic = self.tonic.replace("#", u"\u266F")
+              
+        try:
+            tonic = Scale.names.index(self.tonic)
+            names_ = deque(Scale.names)
+            deque.rotate(names_, -tonic)
+            self.names = list(names_)
+        except ValueError:
+            print("The tonic could not be identified from the string ", base_name)
         
           
 def reveal_formats():
