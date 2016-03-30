@@ -51,7 +51,10 @@ def local_fft(chs, f0, f1, norm="ortho"):
     """
     return np.stack(np.fft.rfft(ch[f0:f1], norm=norm) for ch in chs)
 
-
+def get_peaks(amp, frq, thres):
+    peak_i = peakutils.indexes(amp, thres=thres)
+    return (frq[peak_i], amp[peak_i])
+    
 def main():
 
     # x = snd.shape[0]             # number of sample points (duration * rate)
@@ -60,29 +63,36 @@ def main():
     # import contents of wav file
     sf, snd = wavfile.read(wav_name)
     snd = scale_snd(snd)
-
-    to_f = get_to_f(sf)
     
+    to_f = get_to_f(sf)
     t_endp = (0.5, 1.0)
     f_endp = to_f(t_endp)
     # total number of frames should be even
     f_endp[1] += sum(f_endp) % 2
 
     amp = local_fft(snd.T, *f_endp)
-    w_sq = abs(amp) ** 2
-    w_pwr = 10. * np.log10(w_sq) # dB
+    amp_sq = abs(amp) ** 2
+    amp_pwr = 10. * np.log10(amp_sq) # dB
+    amp_out = amp_pwr
     frq = np.fft.fftfreq(f_endp[1] - f_endp[0])
     frq_a = abs(sf * frq)[0:amp.shape[1]]   # Hz
 
     thres = 0.01  # peak detection threshold as factor of w_max
-    peaks = peakutils.indexes(w_pwr[0], thres=thres)
-    peak_frq = frq_a[peaks]
-    peak_w = w_pwr[0, peaks]
+    peaks = [get_peaks(amp_j, frq_a, thres) for amp_j in amp_out]
+    amp_max = [max(amp_j) for amp_j in amp_out]
+    # plot sound intensity (dB) versus frequency (Hz)
 
-    w_max = max(w_pwr[0])
-    pyplot.plot(frq_a, w_pwr[0], 'k-')
-    pyplot.plot(peak_frq, peak_w+1, 'r.')
-    pyplot.axis([0, peak_frq[-1] * 1.1, 0, w_max + 5])
+    frq_max = 0
+    clr = 'bgrcmyk'
+    for i, ch in enumerate(amp_out):
+        pyplot.plot(frq_a, ch, "{}-".format(clr[-i]))
+        pyplot.plot(peaks[i][0], peaks[i][1] + i, "{}.".format(clr[-i]))
+        frq_max_i = max(peaks[i][0])
+        if frq_max_i > frq_max: frq_max = frq_max_i
+    
+    pyplot.axis([0, frq_max * 1.1, 0, max(amp_max) * 1.1])
     pyplot.xlabel('Hz')
     pyplot.ylabel('dB')
     pyplot.show()
+
+    return peaks
