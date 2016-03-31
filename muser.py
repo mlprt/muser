@@ -10,7 +10,7 @@ import matplotlib
 import matplotlib.pyplot
 import pyopencl
 import pyopencl.array
-import gpyfft
+import gpyfft.fft
 import peakutils
 
 # Datatypes that SciPy can import from .wav
@@ -102,15 +102,26 @@ def get_np_rfft(norm=None):
 
 
 def get_cl_fft_1d(length):
-    ctx = pyopencl.create_some_context(interactive=False)
-    queue = pyopencl.CommandQueue(ctx)
-    plan = pyfft.cl.Plan((length, 1), queue=queue)
-
+    context = pyopencl.create_some_context()
+    queue = pyopencl.CommandQueue(context)
+    #GFFT = gpyfft.GpyFFT(debug=True)
+    #plan = GFFT.create_plan(context, (length, ))
+    #plan.bake(queue)
+    
     def cl_fft_1d(data):
-        gpu_data = pyopencl.array.to_device(queue, data)
-        plan.execute(gpu_data.data)
-
-        return gpu_data.get()
+        data = np.array(data, dtype=np.complex64)
+        dataC = pyopencl.array.to_device(queue, data)
+        #dataF = pyopencl.array.to_device(queue, np.asfortranarray(data))
+        result = np.zeros_like(data)
+        resultC = pyopencl.array.to_device(queue, result)
+        #resultF = pyopencl.array.to_device(queue, np.asfortranarray(result))
+        transform = gpyfft.fft.FFT(context, queue, (dataC,))
+        events = transform.enqueue()
+        #events = plan.enqueue_transform((queue,), (dataC,), (resultC,))
+        for e in events:
+            e.wait()
+            
+        return dataC
         
     return cl_fft_1d
 
