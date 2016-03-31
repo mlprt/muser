@@ -4,11 +4,13 @@ Machine learning music
 
 import sys
 import numpy as np
-import tensorflow as tf
 from scipy.io import wavfile
 import jack
 import matplotlib
 import matplotlib.pyplot
+import pyopencl
+import pyopencl.array
+import gpyfft
 import peakutils
 
 # Datatypes that SciPy can import from .wav
@@ -17,6 +19,7 @@ SND_DTYPES = {'int16': 16-1, 'int32': 32-1}
 CLRS = 'bgrcmyk'
 # Set default font for matplotlib
 matplotlib.rcParams['font.family'] = 'TeX Gyre Adventor'
+
 
 def jack_client(midi_ins=1, midi_outs=1, name="MuserClient"):
     """Returns an active JACK client with specified number of inputs and outputs
@@ -29,6 +32,23 @@ def jack_client(midi_ins=1, midi_outs=1, name="MuserClient"):
     client.activate()
 
     return client
+
+
+def load_wav(wav_name, scale=True):
+    """ """
+    sample_frq, snd = wavfile.read(wav_name)
+    if scale: snd = scale_snd(snd)
+
+    return sample_frq, snd
+
+
+def scale_snd(snd, factor=None):
+    """ Scale signal from -1 to 1.
+    """
+    if factor is None:
+        return scale_snd(snd, 2.**SND_DTYPES[snd.dtype.name])
+
+    return snd / factor
 
 
 def get_to_frames(sample_frq):
@@ -49,20 +69,20 @@ def get_to_frames(sample_frq):
     return to_frames
 
 
-def scale_snd(snd, factor=None):
-    """ Scale signal from -1 to 1.
-    """
-    if factor is None:
-        return scale_snd(snd, 2.**SND_DTYPES[snd.dtype.name])
-
-    return snd / factor
-
-
-def local_rfft(chs, f_endp, units='', norm='ortho'):
+def local_rfft(snd, f_start, length, units='', norm='ortho', cl_fft=None):
     """ Calculate FFTs for each channel over the interval
     """
-    rfft = np.stack(np.fft.rfft(ch[slice(*f_endp)], norm=norm) for ch in chs)
-    frq = np.fft.fftfreq(f_endp[1] - f_endp[0])[0:rfft.shape[1]]
+    loc = slice(f_start, f_start + length)
+    np_rfft = get_np_rfft(norm)
+
+    local = [ch[loc].reshape((length, 1)) for ch in snd]
+    _fft = np_rfft if cl_fft == None else cl_fft
+    print local[0].shape
+    rfft = np.stack(_fft(ch) for ch in local)
+
+    print rfft
+        
+    frq = np.fft.fftfreq(length)[0:rfft.shape[1]]
     
     if units == '':
         amp = rfft
@@ -72,6 +92,27 @@ def local_rfft(chs, f_endp, units='', norm='ortho'):
         amp = abs(rfft) ** 2.
         
     return amp, frq
+
+
+def get_np_rfft(norm=None):
+    def np_rfft(data):
+        return np.fft.rfft(data, norm=norm)
+
+    return np_rfft
+
+
+def get_cl_fft_1d(length):
+    ctx = pyopencl.create_some_context(interactive=False)
+    queue = pyopencl.CommandQueue(ctx)
+    plan = pyfft.cl.Plan((length, 1), queue=queue)
+
+    def cl_fft_1d(data):
+        gpu_data = pyopencl.array.to_device(queue, data)
+        plan.execute(gpu_data.data)
+
+        return gpu_data.get()
+        
+    return cl_fft_1d
 
 
 def get_peaks(amp, frq, thres):
@@ -86,7 +127,7 @@ def get_peaks(amp, frq, thres):
     return peaks
 
 
-def get_plot(title="", xlabel="", ylabel="", facecolor='w', bgcolor='w'):
+def get_axes(title="", xlabel="", ylabel="", facecolor='w', bgcolor='w'):
     """ """
     fig = matplotlib.pyplot.figure()
     axes = fig.add_subplot(111)
@@ -99,42 +140,39 @@ def get_plot(title="", xlabel="", ylabel="", facecolor='w', bgcolor='w'):
     return fig, axes
 
 
-def load_wav(wav_name, scale=True):
-    sample_frq, snd = wavfile.read(wav_name)
-    if scale: snd = scale_snd(snd)
-
-    return sample_frq, snd
-
-
-def main(wav_name="op28-20.wav", t_endp=(None, None)):
+def main(wav_name="op28-20.wav", t_start=0.5, length=8):
     # t = np.arange(0, x, 1) / sample_frq  # sample points as time points (seconds)
     # import contents of wav file
 
     sample_frq, snd = load_wav(wav_name)
     to_frames = get_to_frames(sample_frq)
-    f_endp = to_frames(t_endp)
-    f_endp[1] += sum(f_endp) % 2  # total number of frames should be even
-
-    amp, frq = local_rfft(snd.T, f_endp, units='dB')
+    f_start = to_frames(t_start)[0]
+    length = 2 ** length
+    
+    cl_fft = get_cl_fft_1d(length)
+    amp, frq = local_rfft(snd.T, f_start, length, units='dB')
+    amp, frq = local_rfft(snd.T, f_start, length, units='dB', cl_fft=cl_fft)
     frq = abs(sample_frq * frq)   # Hz
 
-    thres = 0.01  # peak detection threshold as factor of amp_max
+    thres = 0.01  # threshold for peak detection, fraction of max
     peaks = get_peaks(amp, frq, thres)
     maxes = zip(*[(max(peak[0]), max(peak[1])) for peak in peaks])
     
-    # axes sound intensity (dB) versus frequency (Hz)
-    axes_title = '{}, $\Delta$t = {}'.format(wav_name, t_endp)
-    fig, axes = get_plot(axes_title, 'Hz', 'dB')
-    marg = 1.1
+    # plot sound intensity (dB) versus frequency (Hz)
+    axes_title = '{}, t = {} + {} samples @ {} Hz'
+    axes_title = axes_title.format(wav_name, t_start, length, )
+    fig, axes = get_axes(axes_title, 'Hz', 'dB')
+    margin = 1.1
     for i, ch in enumerate(amp):
-        axes.plot(frq, ch, "{}-".format(CLRS[-i]))
-        axes.plot(peaks[i][0], peaks[i][1] + i, "{}.".format(CLRS[-i]))
+        clr = CLRS[-i]
+        
+        axes.plot(frq, ch, "{}-".format(clr))
+        axes.plot(peaks[i][0], peaks[i][1] + i, "{}.".format(clr))
 
-    axes.axis([0, max(maxes[0]) * marg, 0, max(maxes[1]) * marg])
+    axes.axis([0, max(maxes[0]) * margin, 0, max(maxes[1]) * margin])
     matplotlib.pyplot.show()
 
-    return peaks
 
 if __name__ == '__main__':
     t_endp = (float(sys.argv[1]), float(sys.argv[2]))
-    main(t_endp=t_endp)
+    main()
