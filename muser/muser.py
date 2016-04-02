@@ -15,8 +15,6 @@ import peakutils
 
 # Datatypes that SciPy can import from .wav
 SND_DTYPES = {'int16': 16-1, 'int32': 32-1} 
-# Colours for cycling in plots
-CLRS = 'bgrcmyk'
 # Set default font for matplotlib
 matplotlib.rcParams['font.family'] = 'TeX Gyre Adventor'
 
@@ -25,13 +23,14 @@ def jack_client(midi_ins=1, midi_outs=1, name="MuserClient"):
     """Returns an active JACK client with specified number of inputs and outputs
     """
     client = jack.Client(name)
+    ports_in, ports_out = [], []
     for j in range(midi_ins):
-        client.midi_inports.register("midi_in_{}".format(j))
+        ports_in[j] = client.midi_inports.register("midi_in_{}".format(j))
     for k in range(midi_outs):
-        client.midi_outports.register("midi_out_{}".format(k))
+        ports_out['out'][j] = client.midi_outports.register("midi_out_{}".format(k))
     client.activate()
 
-    return client
+    return client, ports
 
 
 def load_wav(wav_name, scale=True):
@@ -60,7 +59,8 @@ def get_to_frames(sample_frq):
             try:
                 return int(time * sample_frq)
             except TypeError: # time not specified or specified badly
-                raise TypeError("Real local endpoints must be specified! (t_endp)")
+                e = "Real local endpoints must be specified! (t_endp)"
+                raise TypeError(e)
         try:
             return [to_f(t) for t in time]
         except TypeError: # time not iterable
@@ -69,19 +69,14 @@ def get_to_frames(sample_frq):
     return to_frames
 
 
-def local_rfft(snd, f_start, length, units='', norm='ortho', cl_fft=None):
+def local_rfft(snd, f_start, length, units='', norm='ortho', rfft_=None):
     """ Calculate FFTs for each channel over the interval
     """
+    if rfft_ is None: rfft_ = get_np_rfft()
     loc = slice(f_start, f_start + length)
-    np_rfft = get_np_rfft(norm)
+    local = [ch[loc] for ch in snd]
 
-    local = [ch[loc].reshape((length, 1)) for ch in snd]
-    _fft = np_rfft if cl_fft == None else cl_fft
-    print local[0].shape
-    rfft = np.stack(_fft(ch) for ch in local)
-
-    print rfft
-        
+    rfft = np.stack(rfft_(ch) for ch in local)  
     frq = np.fft.fftfreq(length)[0:rfft.shape[1]]
     
     if units == '':
@@ -101,38 +96,31 @@ def get_np_rfft(norm=None):
     return np_rfft
 
 
-def get_cl_fft_1d(length):
-    context = pyopencl.create_some_context()
+def get_cl_rfft(length):
+    """ Prepares gpyfft for 1D arrays of known length """
+    context = pyopencl.create_some_context(interactive=False)
     queue = pyopencl.CommandQueue(context)
-    #GFFT = gpyfft.GpyFFT(debug=True)
-    #plan = GFFT.create_plan(context, (length, ))
-    #plan.bake(queue)
     
-    def cl_fft_1d(data):
+    def cl_rfft(data):
+        """ """
         data = np.array(data, dtype=np.complex64)
-        dataC = pyopencl.array.to_device(queue, data)
-        #dataF = pyopencl.array.to_device(queue, np.asfortranarray(data))
-        result = np.zeros_like(data)
-        resultC = pyopencl.array.to_device(queue, result)
-        #resultF = pyopencl.array.to_device(queue, np.asfortranarray(result))
-        transform = gpyfft.fft.FFT(context, queue, (dataC,))
+        data_c = pyopencl.array.to_device(queue, data)
+        transform = gpyfft.fft.FFT(context, queue, (data_c,))
         events = transform.enqueue()
-        #events = plan.enqueue_transform((queue,), (dataC,), (resultC,))
         for e in events:
             e.wait()
             
-        return dataC
+        return data_c.get()[:length/2]
         
-    return cl_fft_1d
+    return cl_rfft
 
 
 def get_peaks(amp, frq, thres):
     """ """
     try:
-        iter(amp)
         peaks_idx = [peakutils.indexes(ch, thres=thres) for ch in amp]
         peaks = [(frq[idx], amp[i][idx]) for i, idx in enumerate(peaks_idx)]
-    except TypeError:
+    except TypeError: # amp not iterable
         return get_peaks([amp], frq, thres=thres)
         
     return peaks
@@ -151,39 +139,44 @@ def get_axes(title="", xlabel="", ylabel="", facecolor='w', bgcolor='w'):
     return fig, axes
 
 
-def main(wav_name="op28-20.wav", t_start=0.5, length=8):
-    # t = np.arange(0, x, 1) / sample_frq  # sample points as time points (seconds)
-    # import contents of wav file
+def plot_fft(frq, amp, sample_freq, title='', labels=['Hz', 'dB'], peaks=None,
+             save=False, scale=None, margin=1.1):
+    """ Create a plot and plot FFT data, and peak marker points if included """
 
-    sample_frq, snd = load_wav(wav_name)
+    fig, axes = get_axes(title, *labels)
+    axes.plot(frq, amp, 'k-')
+    if peaks:
+        axes.plot(peaks[0], peaks[1] + 1, 'r.')
+        axes.axis([0, max(peaks[0]) * margin, 0, max(peaks[1]) * margin])
+    if save:
+        fig.savefig(save)
+    
+    return axes
+
+
+def main(wav_name="op28-20", t_start=0.5, length=None):
+    # import contents of wav file
+    if length is None: length = 2**15
+    
+    sample_frq, snd = load_wav('{}.wav'.format(wav_name))
     to_frames = get_to_frames(sample_frq)
     f_start = to_frames(t_start)[0]
-    length = 2 ** length
     
-    cl_fft = get_cl_fft_1d(length)
-    amp, frq = local_rfft(snd.T, f_start, length, units='dB')
-    amp, frq = local_rfft(snd.T, f_start, length, units='dB', cl_fft=cl_fft)
+    rffts = [get_cl_rfft(length), get_np_rfft()]
+    amp, frq = local_rfft(snd.T, f_start, length, units='dB', rfft_=rffts[1])
     frq = abs(sample_frq * frq)   # Hz
 
     thres = 0.01  # threshold for peak detection, fraction of max
     peaks = get_peaks(amp, frq, thres)
-    maxes = zip(*[(max(peak[0]), max(peak[1])) for peak in peaks])
     
     # plot sound intensity (dB) versus frequency (Hz)
-    axes_title = '{}, t = {} + {} samples @ {} Hz'
-    axes_title = axes_title.format(wav_name, t_start, length, )
-    fig, axes = get_axes(axes_title, 'Hz', 'dB')
-    margin = 1.1
     for i, ch in enumerate(amp):
-        clr = CLRS[-i]
+        title = '{}.wav, t = {} + {} samples @ {} {}'
+        title = title.format(wav_name, t_start, length, sample_frq, 'Hz')
+        file_name = 'fft_{}_t{}_ch{}.png'.format(wav_name, t_start, i)
+        plot_fft(frq, ch, sample_frq, title, peaks=peaks[i], save=file_name)
         
-        axes.plot(frq, ch, "{}-".format(clr))
-        axes.plot(peaks[i][0], peaks[i][1] + i, "{}.".format(clr))
-
-    axes.axis([0, max(maxes[0]) * margin, 0, max(maxes[1]) * margin])
-    matplotlib.pyplot.show()
-
 
 if __name__ == '__main__':
-    t_endp = (float(sys.argv[1]), float(sys.argv[2]))
+    #t_endp = (float(sys.argv[1]), float(sys.argv[2]))
     main()
