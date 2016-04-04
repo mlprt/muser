@@ -27,10 +27,14 @@ def jack_client(midi_ins=1, midi_outs=1, name="MuserClient"):
     for j in range(midi_ins):
         ports_in[j] = client.midi_inports.register("midi_in_{}".format(j))
     for k in range(midi_outs):
-        ports_out['out'][j] = client.midi_outports.register("midi_out_{}".format(k))
+        ports_out[k] = client.midi_outports.register("midi_out_{}".format(k))
     client.activate()
 
     return client, ports
+
+
+#def jack_thru(client, midi_in, midi_out):
+#    client.connect()    
 
 
 def load_wav(wav_name, scale=True):
@@ -64,12 +68,13 @@ def get_to_frames(sample_frq):
         try:
             return [to_f(t) for t in time]
         except TypeError: # time not iterable
-            return [to_f(time)]
+            return to_f(time)
         
     return to_frames
 
 
-def local_rfft(snd, f_start, length, units='', norm='ortho', rfft_=None):
+def local_rfft(snd, f_start, length, units='', norm='ortho',
+               rfft_=None, scale=None):
     """ Calculate FFTs for each channel over the interval
     """
     if rfft_ is None: rfft_ = get_np_rfft()
@@ -78,6 +83,9 @@ def local_rfft(snd, f_start, length, units='', norm='ortho', rfft_=None):
 
     rfft = np.stack(rfft_(ch) for ch in local)  
     frq = np.fft.fftfreq(length)[0:rfft.shape[1]]
+
+    if scale:
+        rfft = rfft / scale(rfft)
     
     if units == '':
         amp = rfft
@@ -160,10 +168,13 @@ def main(wav_name="op28-20", t_start=0.5, length=None):
     
     sample_frq, snd = load_wav('{}.wav'.format(wav_name))
     to_frames = get_to_frames(sample_frq)
-    f_start = to_frames(t_start)[0]
+    f_start = to_frames(t_start)
     
     rffts = [get_cl_rfft(length), get_np_rfft()]
-    amp, frq = local_rfft(snd.T, f_start, length, units='dB', rfft_=rffts[1])
+    rfft_tmp = rffts[0]
+    scale = lambda x: np.sqrt(length)
+    amp, frq = local_rfft(snd.T, f_start, length, units='dB',
+                          rfft_=rfft_tmp, scale=scale)
     frq = abs(sample_frq * frq)   # Hz
 
     thres = 0.01  # threshold for peak detection, fraction of max
@@ -171,12 +182,16 @@ def main(wav_name="op28-20", t_start=0.5, length=None):
     
     # plot sound intensity (dB) versus frequency (Hz)
     for i, ch in enumerate(amp):
-        title = '{}.wav, t = {} + {} samples @ {} {}'
-        title = title.format(wav_name, t_start, length, sample_frq, 'Hz')
-        file_name = 'fft_{}_t{}_ch{}.png'.format(wav_name, t_start, i)
+        title = '{}.wav, t[s] = {} $-$ {}'
+        t_end = t_start + length / float(sample_frq)
+        title = title.format(wav_name, t_start, t_end)
+        file_name = 'fft_{}_t{}-{}_ch{}.png'.format(wav_name, t_start, t_end, i)
         plot_fft(frq, ch, sample_frq, title, peaks=peaks[i], save=file_name)
         
 
 if __name__ == '__main__':
-    #t_endp = (float(sys.argv[1]), float(sys.argv[2]))
-    main()
+    n_argv = len(sys.argv)
+    if n_argv == 2:
+        main(t_start=float(sys.argv[1]))
+    else: 
+        main()
