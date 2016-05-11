@@ -75,17 +75,15 @@ def local_rfft(snd, f_start, length, units='', rfft=None, scale=None):
     loc = slice(f_start, f_start + length)
     local = [ch[loc] for ch in snd]
     amp = np.stack(rfft(ch) for ch in local)
-    frq = np.fft.fftfreq(length)[0:amp.shape[1]]
-
     if scale:
         amp = amp / scale(amp)
-
     if units == '':
         amp = amp
     elif units == 'dB':
         amp = 10. * np.log10(abs(amp) ** 2.)
     elif units == 'sqr':
         amp = abs(amp) ** 2.
+    frq = np.fft.fftfreq(length)[0:amp.shape[1]]
 
     return amp, frq
 
@@ -120,6 +118,9 @@ def get_peaks(amp, frq, thres):
     """ """
     try:
         peaks_idx = [peakutils.indexes(ch, thres=thres) for ch in amp]
+        # TODO: could convert to numpy (constant size) if assign peaks
+        #       to harmonic object containing all notes
+        #       (could also be used for training)
         peaks = [(frq[idx], amp[i][idx]) for i, idx in enumerate(peaks_idx)]
     except TypeError:  # amp not iterable
         return get_peaks([amp], frq, thres=thres)
@@ -148,12 +149,17 @@ def plot_fft(frq, amp, title='', labels=['Hz', 'dB'], peaks=None,
     axes.plot(frq, amp, 'k-')
     if any(peaks[0]):
         axes.plot(peaks[0], peaks[1] + 1, 'r.')
-        maxes = max(peaks[0]), max(peaks[1])
+        # TODO: Generalize for many FFTs (plotting in same video)
+        # amp_mean = np.mean(peaks[1])
+        # amp_std = np.std(peaks[1])
+        # cut = 2 * amp_std + amp_mean
+        # frq_cut = peaks[0][0:np.amax(np.where(peaks[1] > cut))]
     else:
         maxes = max(frq), max(amp)
     if scale:
         # axes.axis([0, maxes[0] * margin, 0, maxes[1] * margin])
-        axes.axis([0, 5000, 0, np.amax(amp)])
+        axes.axis([0, 4000, 0, 10])
+        # Highest note on 88-key piano is C8, 4186.01 Hz
     if save:
         fig.savefig(save)
 
@@ -183,7 +189,9 @@ def get_make_frame(snd, chan, sample_frq, to_frames, rfft=None, rfft_len=None):
             rfft_len = 2**(nearest_pow(sample_frq, 2) - res)
         rfft = get_cl_rfft(rfft_len)
     elif rfft_len is None:
-        raise TypeError("rfft_len must be provided with rfft")
+        # raise TypeError("rfft_len must be provided with rfft")
+        res = 2  # 2**res == ~number of fft bins per second
+        rfft_len = 2**(nearest_pow(sample_frq, 2) - res)
 
     # TODO: Change to single figure that is updated each time?
     def make_frame(t):
