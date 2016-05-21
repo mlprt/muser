@@ -1,5 +1,9 @@
-"""
-Machine learning music
+# -*- coding: utf-8 -*-
+"""Operations on audio with a view to musical machine learning.
+
+Python bindings for clFFT are provided by gpyfft. clFFT is an open source FFT library by AMD, based on OpenCL.
+
+Low-latency audio connectivity is provided by the JACK Audio Connection Kit.
 """
 
 import sys
@@ -15,15 +19,20 @@ import peakutils
 import moviepy.editor
 from moviepy.video.io.bindings import mplfig_to_npimage
 
-# Datatypes that SciPy can import from .wav
-SND_DTYPES = {'int16': 16-1, 'int32': 32-1}
-# Set default font for matplotlib
+SND_DTYPES = {'int16': 16, 'int32': 32}
+"""dict: Data types that SciPy can import from .wav"""
+
 matplotlib.rcParams['font.family'] = 'MathJax_Main'
-# Latin Modern Math, Latin Modern Mono, Inconsolata, Linux Libertine Mono O
+"""str: Name of default font used by matplotlib"""
 
 
 def jack_client(midi_ins=1, midi_outs=1, name="MuserClient"):
-    """Returns an active JACK client with specified number of inputs and outputs
+    """Returns an active JACK client with specified number of inputs and outputs.
+
+    Args:
+        midi_ins (int): Number of MIDI in ports to register. Defaults to 1.
+        midi_outs (int): Number of MIDI out ports to register. Defaults to 1.
+        name (str): Name of the returned client. Defaults to "MuserClient".
     """
     client = jack.Client(name)
     for j in range(midi_ins):
@@ -35,22 +44,23 @@ def jack_client(midi_ins=1, midi_outs=1, name="MuserClient"):
     return client
 
 
-# def jack_thru(client, midi_in, midi_out):
-#    client.connect()
+def scale_snd(snd, scalar=None):
+    """ Scale a
 
-
-def scale_snd(snd, factor=None):
-    """ Scale signal from -1 to 1.
+    Args:
+        snd (np.ndarray)
     """
     if factor is None:
-        return scale_snd(snd, 2.**SND_DTYPES[snd.dtype.name])
+        factor = 2.**(SND_DTYPES[snd.dtype.name] - 1)
 
-    return snd / factor
+    try:
+        return snd / factor
+    except
 
 
 def get_to_frames(sample_frq):
-    """Return function that converts time (is s if sf is Hz) to sample index
-       for a defined sampling rate.
+    """Return function that converts time to sample index.
+    Assumes
     """
     def to_frames(time):
         def to_f(time):
@@ -74,6 +84,7 @@ def local_rfft(snd, f_start, length, units='', rfft=None, scale=None):
         rfft = get_np_rfft()
     loc = slice(f_start, f_start + length)
     local = [ch[loc] for ch in snd]
+
     amp = np.stack(rfft(ch) for ch in local)
     if scale:
         amp = amp / scale(amp)
@@ -83,6 +94,7 @@ def local_rfft(snd, f_start, length, units='', rfft=None, scale=None):
         amp = 10. * np.log10(abs(amp) ** 2.)
     elif units == 'sqr':
         amp = abs(amp) ** 2.
+
     frq = np.fft.fftfreq(length)[0:amp.shape[1]]
 
     return amp, frq
@@ -173,13 +185,6 @@ def nearest_pow(num, base, rule=round):
     return int(rule(np.log10(num) / np.log10(base)))
 
 
-def setup(wav_name, scale=True):
-    sample_frq, snd = wavfile.read(wav_name)
-    to_frames = get_to_frames(sample_frq)
-    if scale:
-        snd = scale_snd(snd)
-
-    return sample_frq, snd.T, to_frames
 
 
 def get_make_frame(snd, chan, sample_frq, to_frames, rfft=None, rfft_len=None):
@@ -210,7 +215,9 @@ def get_make_frame(snd, chan, sample_frq, to_frames, rfft=None, rfft_len=None):
 
 
 def fft_movie(wav_name, chan=0, fps=4, rfft=None, rfft_len=None):
-    sample_frq, snd, to_frames = setup(wav_name + '.wav')
+    sample_frq, snd = wavfile.read(wav_name + '.wav')
+    snd = scale_snd(snd)
+    to_frames = get_to_frames(sample_frq)
     snd_dur = len(snd[chan]) / float(sample_frq)
     make_frame = get_make_frame(snd, chan, sample_frq, to_frames=to_frames,
                                 rfft=rfft, rfft_len=rfft_len)
@@ -223,7 +230,9 @@ def main(wav_name="op28-20", t_start=0.5, length=None):
     if length is None:
         length = 2**15
 
-    sample_frq, snd, to_frames = setup(wav_name + '.wav')
+    sample_frq, snd = wavfile.read(wav_name + '.wav')
+    snd = scale_snd(snd)
+    to_frames = get_to_frames(sample_frq)
     f_start = to_frames(t_start)
     rffts = [get_cl_rfft(length), get_np_rfft()]
     rfft_tmp = rffts[0]
