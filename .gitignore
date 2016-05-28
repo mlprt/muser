@@ -1,3 +1,27 @@
+# audio and related files
+*.wav
+*.mp3
+*.flac
+*.ape
+*.mid
+*.mxl
+*.cue
+*.alac
+*.ogg
+
+# images
+*.png
+*.jpg
+*.svg
+*.gif
+
+# videos
+*.mp4
+*.mkv
+*.avi
+*.flv
+*.webm
+
 # emacs
 *~
 \#*\#
