@@ -13,7 +13,22 @@ matplotlib.rcParams['font.family'] = 'MathJax_Main'
 
 def plot_fft(frq, amp, title='', labels=['Hz', 'dB'], peaks=None,
              save=False, scale=True, margin=1.1):
-    """ Plot FFT data, and peak markers if included """
+    """ Plot FFT data, and peak markers if included.
+
+    Parameters:
+        frq ():
+        amp ():
+        title (str):
+        labels (list[str]):
+        peaks ():
+        save (bool):
+        scale (bool):
+        margin (float):
+
+    Returns:
+        fig ():
+        axes ():
+    """
 
     fig, axes = get_axes(title, *labels)
     axes.plot(frq, amp, 'k-')
@@ -37,7 +52,19 @@ def plot_fft(frq, amp, title='', labels=['Hz', 'dB'], peaks=None,
 
 
 def get_axes(title="", xlabel="", ylabel="", facecolor='w', bgcolor='w'):
-    """ """
+    """
+
+    Parameters:
+        title (str):
+        xlabel (str):
+        ylabel (str):
+        facecolor ():
+        bgcolor ():
+
+    Returns:
+        fig ():
+        axes ():
+    """
     fig = matplotlib.pyplot.figure()
     axes = fig.add_subplot(111)
     axes.patch.set_facecolor(facecolor)
@@ -47,6 +74,7 @@ def get_axes(title="", xlabel="", ylabel="", facecolor='w', bgcolor='w'):
     axes.set_ylabel(ylabel)
 
     return fig, axes
+
 
 def get_make_frame(snd, chan, sample_frq, to_frames, rfft=None, rfft_len=None):
     if rfft is None:
