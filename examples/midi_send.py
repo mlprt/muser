@@ -4,12 +4,12 @@ During sends, destroys rtmidi.MidiOut interface after `KeyboardInterrupt` or `Sy
 """
 
 import muser.iodata
+import muser.sequencer
 import music21
 
 tempo = 90/60.  # quarter notes per second
-melody = music21.converter.parse("tinynotation: C8 D# G c G D#") #minor arpeggio
-notes = list(melody.flat.getElementsByClass(music21.note.Note))
-durations = [tempo * 0.1] * len(notes) # fraction of quarter notes
+notes = muser.sequencer.notation_to_notes("tinynotation: C8 D# G c G D#")
+durations = [tempo * 0.1] * len(notes)
 for i, note in enumerate(notes):
     note.duration.quarterLength = durations[i]
     note.volume.velocityScalar = 0.7
@@ -22,8 +22,7 @@ for note in midi_notes_:
 try:
     midi_out, _ = muser.iodata.init_midi_out()
     send_events = muser.iodata.get_send_events(midi_out)
-    while True:
-        send_events(midi_notes)
+    send_events(midi_notes, loop=5)
 
 except (KeyboardInterrupt, SystemExit):
     try:

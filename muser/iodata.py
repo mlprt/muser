@@ -68,7 +68,7 @@ def get_send_events(midi_out):
                 # TODO: offset instead of pause (simpler concurrent notes)
             if loop > 1:
                 loop -= 1
-            if not loop:
+            else:
                 break
 
     return send_events
@@ -164,6 +164,8 @@ def get_to_sample_index(sample_frq):
 
             return sample
 
+    return to_sample_index
+
 
 def unit_snd(snd, factor=None):
     """ Scale elements of an array of wav data from -1 to 1.
@@ -182,3 +184,19 @@ def unit_snd(snd, factor=None):
     scaled = snd / factor
 
     return scaled
+
+
+def wav_read_scaled(wavfile_name):
+    """ Return contents of `.wav` scaled from -1 to 1.
+
+    Parameters:
+        wavfile_name (str):
+
+    Returns:
+        sample_rate (int):
+        snd (np.ndarray):
+    """
+    sample_rate, snd = wavfile.read(wavfile_name)
+    snd = unit_snd(snd)
+
+    return sample_rate, snd
