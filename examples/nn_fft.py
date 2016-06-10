@@ -12,12 +12,12 @@ TODO: Switch to TensorFlow batch 1D FFT when supported by OpenCL
 """
 
 import numpy as np
+import tensorflow as tf
 import muser.iodata
 import muser.fft
 import jack
-import rtmidi
+import music21
 import matplotlib.pyplot as plt
-import tensorflow as tf
 
 PIANO_LO = 21
 PIANO_HI = 108
@@ -34,14 +34,18 @@ inport_2 = audio_client.inports.register("in_2")
 buffer_size = audio_client.blocksize
 sample_rate = audio_client.samplerate
 
+midi_out, _ = muser.iodata.init_midi_out()
+send_events = muser.iodata.get_send_events(midi_out)
+
 # Training parameters
 batch_size = 64
 batches = 10
 learning_rate = 0.001
 
 
-def get_note_batch(batch_size, note_lo=PIANO_LO, note_hi=PIANO_HI):
-    """ Return a batch of MIDI pitches.
+def get_note_batch(batch_size, pitch_lo=PIANO_LO, pitch_hi=PIANO_HI,
+                   velocity_lo=60, velocity_hi=120):
+    """ Return a batch of MIDI notes.
 
     Arguments:
         batch_size (int): Number of pitches to return
@@ -49,12 +53,21 @@ def get_note_batch(batch_size, note_lo=PIANO_LO, note_hi=PIANO_HI):
         note_hi (int): MIDI pitch of highest note in desired range
 
     Returns:
-        midi_pitches (np.ndarray): Array of MIDI pitches (int)
+        notes (list): List of music21 Note objects
     """
-    midi_pitches = np.random.randint(note_lo, note_hi + 1, size=batch_size)
-    return midi_pitches
+    notes = []
+    for n in range(batch_size):
+        # NOTE: not necessary to use music21 for now... return MIDI event tuples
+        note = music21.note.Note(np.random.randint(pitch_lo, pitch_hi + 1))
+        velocity = np.random.randint(velocity_lo, velocity_hi + 1)
+        note.volume.velocityScalar = velocity
+        notes.append(note)
+        notes = muser.iodata.to_midi_notes(notes)
 
-batch_pitches = [get_note_batch(batch_size) for b in range(batches)]
+    return notes
+
+
+notes_batches = [get_note_batch(batch_size) for b in range(batches)]
 
 # `jack` monitor to capture audio buffers from synthesizer
 buffers = []
@@ -68,7 +81,9 @@ def process(frames):
 with audio_client:
     audio_client.connect(capture_1, "{}:in_1".format(audio_client_name))
     audio_client.connect(capture_2, "{}:in_2".format(audio_client_name))
-    # TODO: use rtmidi to send note batches
+    for notes in notes_batches:
+        # TODO: fix muser.iodata pausing/offsets
+        pass
     input()
 
 # Neural network parameters
