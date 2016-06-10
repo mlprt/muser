@@ -4,7 +4,7 @@ Send notes to MIDI synthesizer, then calculate FFT for resulting audio; FFT beco
 
 Starting with input FFT length equal to JACK buffer size, output vector with length 88 corresponding to all notes on a standard piano, and one hidden layer. By heuristics, number of neurons in single hidden layer likely between 88 and 512.
 
-Each note played will produce many buffers worth of audio data. Resonance will cause some variability in the FFT over time after the note is played, but this can be minimized by disabling certain features of the synthesizer. Initially, play isolated notes/chords and take as inputs the FFTs at maximum amplitude, or as an average over the evolution of the note. As more complex examples are investigated, will need to use other algorithms to isolate harmonic features. Will likely experiment with RNNs.
+Each note played will produce many buffers worth of audio data. FFT should vary over the duration of the note, but this can be minimized by disabling certain features of the synthesizer. Initially, play isolated notes/chords and take the FFTs at maximum amplitude as inputs, or use an average over the duration. As more complex examples are investigated, will need more nuanced algorithm to isolate harmonic features.
 
 TODO: Switch to TensorFlow batch 1D FFT when supported by OpenCL
 """
@@ -22,9 +22,9 @@ PIANO_HI = 108
 """ MIDI pitch range of 88-key piano """
 
 audio_client_name = "MuserAudioClient"
+audio_client = jack.Client(audio_client_name)
 capture_1 = "Pianoteq55:out_1"
 capture_2 = "Pianoteq55:out_2"
-audio_client = jack.Client(audio_client_name)
 inport_1 = audio_client.inports.register("in_1")
 inport_2 = audio_client.inports.register("in_2")
 
@@ -38,24 +38,37 @@ epochs = 10
 
 # Neural network parameters
 inputs = buffer_size
-hidden1_neurons = 300
+hidden1_n = 300
 outputs = 88
 
-ffts_ = tf.placeholder(tf.float32, shape=[None, inputs])
-keys_ = tf.placeholder(tf.float32, shape=[None, outputs])
+# Input placeholder variables
+x = tf.placeholder(tf.float32, shape=[None, inputs])
 
 with tf.name_scope('hidden1'):
     weights = tf.Variable(
-        tf.truncated_normal([inputs, hidden1_neurons],
+        tf.truncated_normal([inputs, hidden1_n],
                             stddev=1.0 / np.sqrt(float(inputs)))
         name='weights')
-    biases = tf.Variable(tf.zeros([hidden1_neurons]), name='biases')
+    biases = tf.Variable(tf.zeros([hidden1_n]), name='biases')
+    hidden1 = tf.nn.relu(tf.matmul(x, weights) + biases)
 
-hidden1 = tf.nn.relu(tf.matmul(ffts, weights) + biases)
-output = tf.matmul(hidden1, weights) + biases
+with tf.name_scope('output'):
+    weights = tf.Variable(
+        tf.truncated_normal([hidden1_n, outputs],
+                            stddev=1.0 / np.sqrt(float(hidden1_n))),
+        name='weights')
+    biases = tf.Variable(tf.zeros([outputs]),
+                         name='biases')
+    output = tf.matmul(hidden1, weights) + biases
 
 # compute cost
-# construct training optimizer
+cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(output, labels,
+                                                               name='crossent')
+cost = tf.reduce_mean(cross_entropy, name='crossent_mean')
+
+# prepare training optimizer
+optimizer = tf.train.GradientDescentOptimizer(learning_rate)
+train_op = optimizer.minimize(cost)
 
 buffers = []
 
