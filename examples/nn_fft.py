@@ -6,6 +6,8 @@ Starting with input FFT length equal to JACK buffer size, output vector with len
 
 Each note played will produce many buffers worth of audio data. FFT should vary over the duration of the note, but this can be minimized by disabling certain features of the synthesizer. Initially, play isolated notes/chords and take the FFTs at maximum amplitude as inputs, or use an average over the duration. As more complex examples are investigated, will need more nuanced algorithm to isolate harmonic features.
 
+Currently using `rtmidi` to send notes to the synthesizer, as this is much simpler to time without messing with threading and buffer offsets through `jack`, which now monitors audio buffers output from the synthesizer. Hope to eliminate one of these dependencies eventually.
+
 TODO: Switch to TensorFlow batch 1D FFT when supported by OpenCL
 """
 
@@ -13,6 +15,7 @@ import numpy as np
 import muser.iodata
 import muser.fft
 import jack
+import rtmidi
 import matplotlib.pyplot as plt
 import tensorflow as tf
 
@@ -20,41 +23,52 @@ PIANO_LO = 21
 PIANO_HI = 108
 """ MIDI pitch range of 88-key piano """
 
+# Synthesizer MIDI outport names
+capture_1 = "Pianoteq55:out_1"
+capture_2 = "Pianoteq55:out_2"
+
+audio_client_name = "MuserAudioClient"
+audio_client = jack.Client(audio_client_name)
+inport_1 = audio_client.inports.register("in_1")
+inport_2 = audio_client.inports.register("in_2")
+buffer_size = audio_client.blocksize
+sample_rate = audio_client.samplerate
+
 # Training parameters
 batch_size = 64
 batches = 10
 learning_rate = 0.001
 
-audio_client_name = "MuserAudioClient"
-audio_client = jack.Client(audio_client_name)
-capture_1 = "Pianoteq55:out_1"
-capture_2 = "Pianoteq55:out_2"
-inport_1 = audio_client.inports.register("in_1")
-inport_2 = audio_client.inports.register("in_2")
 
-buffer_size = audio_client.blocksize
-sample_rate = audio_client.samplerate
+def get_note_batch(batch_size, note_lo=PIANO_LO, note_hi=PIANO_HI):
+    """ Return a batch of MIDI pitches.
 
-def get_note_batch(batch_size, chord_size=1, note_range=None):
-    """ Return a batch of MIDI pitches. """
-    if note_range is None:
-        note_range = (PIANO_LO, PIANO_HI + 1)
-    midi_pitches = np.random.randint(*note_range, size=batch_size)
+    Arguments:
+        batch_size (int): Number of pitches to return
+        note_lo (int): MIDI pitch of lowest note in desired range
+        note_hi (int): MIDI pitch of highest note in desired range
+
+    Returns:
+        midi_pitches (np.ndarray): Array of MIDI pitches (int)
+    """
+    midi_pitches = np.random.randint(note_lo, note_hi + 1, size=batch_size)
     return midi_pitches
 
 batch_pitches = [get_note_batch(batch_size) for b in range(batches)]
 
+# `jack` monitor to capture audio buffers from synthesizer
 buffers = []
-
 @audio_client.set_process_callback
 def process(frames):
     buffer = inport_1.get_array()
+    # TODO: record output corresponding to rtmidi sends, collate with MIDI notes
     buffers.append(buffer)
 
+# activate `jack` client and connect to synthesizer output
 with audio_client:
-    # connect to synthesizer's audio output
     audio_client.connect(capture_1, "{}:in_1".format(audio_client_name))
     audio_client.connect(capture_2, "{}:in_2".format(audio_client_name))
+    # TODO: use rtmidi to send note batches
     input()
 
 # Neural network parameters
