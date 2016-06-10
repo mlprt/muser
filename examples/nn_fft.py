@@ -13,13 +13,17 @@ import numpy as np
 import muser.iodata
 import muser.fft
 import jack
-import music21
 import matplotlib.pyplot as plt
 import tensorflow as tf
 
 PIANO_LO = 21
 PIANO_HI = 108
 """ MIDI pitch range of 88-key piano """
+
+# Training parameters
+batch_size = 64
+batches = 10
+learning_rate = 0.001
 
 audio_client_name = "MuserAudioClient"
 audio_client = jack.Client(audio_client_name)
@@ -31,10 +35,27 @@ inport_2 = audio_client.inports.register("in_2")
 buffer_size = audio_client.blocksize
 sample_rate = audio_client.samplerate
 
-# Training parameters
-batch_size = 64
-learning_rate = 0.001
-epochs = 10
+def get_note_batch(batch_size, chord_size=1, note_range=None):
+    """ Return a batch of MIDI pitches. """
+    if note_range is None:
+        note_range = (PIANO_LO, PIANO_HI + 1)
+    midi_pitches = np.random.randint(*note_range, size=batch_size)
+    return midi_pitches
+
+batch_pitches = [get_note_batch(batch_size) for b in range(batches)]
+
+buffers = []
+
+@audio_client.set_process_callback
+def process(frames):
+    buffer = inport_1.get_array()
+    buffers.append(buffer)
+
+with audio_client:
+    # connect to synthesizer's audio output
+    audio_client.connect(capture_1, "{}:in_1".format(audio_client_name))
+    audio_client.connect(capture_2, "{}:in_2".format(audio_client_name))
+    input()
 
 # Neural network parameters
 inputs = buffer_size
@@ -47,7 +68,7 @@ x = tf.placeholder(tf.float32, shape=[None, inputs])
 with tf.name_scope('hidden1'):
     weights = tf.Variable(
         tf.truncated_normal([inputs, hidden1_n],
-                            stddev=1.0 / np.sqrt(float(inputs)))
+                            stddev=1.0 / np.sqrt(float(inputs))),
         name='weights')
     biases = tf.Variable(tf.zeros([hidden1_n]), name='biases')
     hidden1 = tf.nn.relu(tf.matmul(x, weights) + biases)
@@ -70,18 +91,6 @@ cost = tf.reduce_mean(cross_entropy, name='crossent_mean')
 optimizer = tf.train.GradientDescentOptimizer(learning_rate)
 train_op = optimizer.minimize(cost)
 
-buffers = []
-
-@audio_client.set_process_callback
-def process(frames):
-    buffer = inport_1.get_array()
-    buffers.append(buffer)
-
-with audio_client:
-    # connect to synthesizer's audio output
-    audio_client.connect(capture_1, "{}:in_1".format(audio_client_name))
-    audio_client.connect(capture_2, "{}:in_2".format(audio_client_name))
-    input()
 
 with tf.Session() as sess:
     with tf.device("/cpu:0"):
