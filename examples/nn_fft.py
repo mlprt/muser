@@ -12,14 +12,13 @@ TODO: Switch to TensorFlow batch 1D FFT when supported by OpenCL
 """
 
 import numpy as np
-import time
 import tensorflow as tf
 import muser.iodata
 import muser.sequencer
 import muser.fft
 import jack
 import matplotlib.pyplot as plt
-
+import json
 
 # Synthesizer MIDI ports
 synth_out_1 = "Pianoteq55:out_1"
@@ -40,8 +39,8 @@ send_events = muser.iodata.get_send_events(rtmidi_out)
 rtmidi_out_name = "a2j:MuserRtmidiClient [131] (capture): Virtual Port Out 0"
 
 # Training parameters
-batch_size = 64
-batches = 10
+batch_size = 1
+batches = 1
 learning_rate = 0.001
 
 note_batches = []
@@ -49,24 +48,20 @@ for b in range(batches):
     notes = muser.sequencer.get_note_batch(batch_size)
     note_batches.append(muser.iodata.to_midi_notes(notes))
 note_toggle = False
-recording = np.zeros((batches, batch_size), dtype=np.dtype(object))
+recordings = np.zeros((batches, batch_size), dtype=np.dtype(object))
 buffers = []
 
 # `jack` monitor to capture audio buffers from synthesizer
 @audio_client.set_process_callback
 def process(frames):
     global note_toggle
-    try:
-        if note_toggle:
-            buffer = inport_1.get_array()
-            # record entire note (until silence)
-            if np.any(buffer):
-                buffers.append(buffer)
-            else:
-                note_toggle = False
-    except UnboundLocalError:
-        print('hi')
-        pass
+    if note_toggle:
+        buffer = inport_1.get_array()
+        # record entire note (until silence)
+        if np.any(buffer):
+            buffers.append(buffer)
+        else:
+            note_toggle = False
 
 
 with audio_client:
@@ -85,16 +80,22 @@ with audio_client:
                     # `jack` listening through process()
                     pass
                 send_events((note[1],))
-                print(len(buffers))
-                recording[b][n] = buffers
+                recordings[b][n] = buffers
                 buffers = []
 
     except (KeyboardInterrupt, SystemExit):
+        # send "all notes off" signal to synthesizer
+        muser.sequencer.midi_all_off(rtmidi_out)
         # close `rtmidi` and `jack` clients
         del rtmidi_out
         audio_client.deactivate()
         audio_client.close()
         raise
+
+# store audio results
+with open('recordings.json', 'w') as recordings_file:
+    json.dump(recordings, recordings_file, sort_keys=True, indent=4,
+              ensure_ascii=False)
 
 # Neural network parameters
 inputs = buffer_size
