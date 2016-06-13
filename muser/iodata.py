@@ -39,33 +39,26 @@ def init_midi_out(ports=1):
 
 
 def get_send_events(midi_out):
-    """ Returns a function that sends MIDI events through rtmidi.
+    """ Returns a function that sends MIDI events through `rtmidi`.
 
     Parameters:
-        midi_out (rtmidi.MidiOut):
+        midi_out (rtmidi.MidiOut): The `rtmidi` output client.
 
     Returns:
-        send_events (function):
+        send_events (function): Client-specific MIDI event sender.
     """
 
-    def send_events(events, loop=1):
+    def send_events(events):
         """ Send a series of MIDI events out through rtmidi.
+
+        Events sent without pause, so intended for sending series of events that
+        should be heard simultaneously (chords).
 
         Parameters:
             events (list): Tuples specifying MIDI events.
-            loop (int): Number of times to repeat send of events.
-
-        Returns:
-            None
         """
-        while True:
-            for event in events:
-                midi_out.send_message(event)
-                # TODO: offset instead of pause (simpler concurrent notes)
-            if loop > 1:
-                loop -= 1
-            else:
-                break
+        for event in events:
+            midi_out.send_message(event)
 
     return send_events
 
@@ -111,30 +104,6 @@ def to_midi_notes(music21_notes):
     midi_notes = [to_midi_note(note) for note in music21_notes]
 
     return midi_notes
-
-
-def report_midi_event(event, last_frame_time=0, out=sys.stdout):
-    """ Print details of a midi event.
-
-    Parameters:
-        event ():
-        last_frame_time (int):
-        out ():
-    """
-    offset, indata = event
-    #print(struct.unpack(str(len(indata))+'B\n', indata))
-    try:
-        status, pitch, vel = struct.unpack('3B', indata)
-    except struct.error:
-
-        return
-    rprt = "{0} + {1}:\t0x{2}\n".format(last_frame_time,offset,
-                                     binascii.hexlify(indata).decode())
-    #rprt += "indata: {0}\n".format(indata)
-    rprt += "status: {0},\tpitch: {1},\tvel.: {2}\n".format(status, pitch, vel)
-    #rprt += "repacked: {0}".format(struct.pack('3B', status, pitch, vel))
-    rprt += "\n"
-    out.write(rprt)
 
 
 def get_to_sample_index(sample_frq):
@@ -207,3 +176,30 @@ def wav_read_scaled(wavfile_name):
     snd = unit_snd(snd)
 
     return sample_rate, snd
+
+
+def report_midi_event(event, last_frame_time=0, out=sys.stdout):
+    """ Print details of a `jack` MIDI event.
+
+    NOTE: Does not apply to tuples specifying events, as with `rtmidi`.
+    Retaining this material with intent for further `jack` integration.
+
+    Parameters:
+        event ():
+        last_frame_time (int):
+        out ():
+    """
+    offset, indata = event
+    #print(struct.unpack(str(len(indata))+'B\n', indata))
+    try:
+        status, pitch, vel = struct.unpack('3B', indata)
+    except struct.error:
+
+        return
+    rprt = "{0} + {1}:\t0x{2}\n".format(last_frame_time,offset,
+                                     binascii.hexlify(indata).decode())
+    #rprt += "indata: {0}\n".format(indata)
+    rprt += "status: {0},\tpitch: {1},\tvel.: {2}\n".format(status, pitch, vel)
+    #rprt += "repacked: {0}".format(struct.pack('3B', status, pitch, vel))
+    rprt += "\n"
+    out.write(rprt)
