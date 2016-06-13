@@ -9,6 +9,7 @@ import binascii
 import struct
 import numpy as np
 import rtmidi
+import jack
 import music21
 from scipy.io import wavfile
 
@@ -20,25 +21,21 @@ NOTE_OFF = 0x80
 """ MIDI parameters. """
 
 
-def init_midi_out():
-    """  """
+def init_midi_out(ports=1):
+    """ Return `rtmidi` client with given number of output ports.
+
+    Parameters:
+        ports (int): Number of virtual output ports to initialize.
+
+    Returns:
+        midi_out (rtmidi.MidiOut): `rtmidi` output client.
+    """
     midi_out = rtmidi.MidiOut()
-    midi_in = rtmidi.MidiIn()
+    for i in range(ports):
+        port_name = "Virtual Port Out {}".format(i)
+        midi_out.open_virtual_port(port_name)
 
-    ports_out = midi_out.get_ports()
-    ports_in = midi_in.get_ports()
-
-    if ports_out:
-        midi_out.open_port(0)
-    else:
-        midi_out.open_virtual_port("Virtual Port Out 0")
-
-    if ports_in:
-        midi_in.open_port(0)
-    else:
-        midi_in.open_virtual_port("Virtual Port In 0")
-
-    return midi_out, midi_in
+    return midi_out
 
 
 def get_send_events(midi_out):
@@ -55,16 +52,15 @@ def get_send_events(midi_out):
         """ Send a series of MIDI events out through rtmidi.
 
         Parameters:
-            events (list): Tuples of tuple for MIDI event and subsequent pause.
+            events (list): Tuples specifying MIDI events.
             loop (int): Number of times to repeat send of events.
 
         Returns:
             None
         """
         while True:
-            for event, pause in events:
+            for event in events:
                 midi_out.send_message(event)
-                time.sleep(pause)
                 # TODO: offset instead of pause (simpler concurrent notes)
             if loop > 1:
                 loop -= 1
@@ -74,22 +70,33 @@ def get_send_events(midi_out):
     return send_events
 
 
-def to_midi_note(music21_note):
+def send_note(midi_out, note):
+    """ Send a music21.note.Note as a MIDI event.
+
+    Parameters:
+        midi_out (rtmidi.MidiOut):
+        note (music21.note.Note):
+    """
+    event = to_midi_note(note)
+    midi_out.send_message(event)
+
+
+def to_midi_note(note):
     """ Return tuples specifying on/off MIDI note events for a music21 Note.
 
     Parameters:
         music21_note (music21.note.Note): The Note object for conversion
 
     Returns:
-        note_on (tuple): Parameters for the MIDI NOTE_ON event
-        note_off (tuple): Parameters for the MIDI NOTE_OFF event
+        midi_note_on (tuple): Parameters for the MIDI NOTE_ON event
+        midi_note_off (tuple): Parameters for the MIDI NOTE_OFF event
     """
-    midi_pitch = music21_note.pitch.midi
-    velocity = music21_note.volume.velocity
-    note_on = (NOTE_ON, midi_pitch, velocity)
-    note_off = (NOTE_OFF, midi_pitch, velocity)
+    midi_pitch = note.pitch.midi
+    velocity = note.volume.velocity
+    midi_note_on = (NOTE_ON, midi_pitch, velocity)
+    midi_note_off = (NOTE_OFF, midi_pitch, velocity)
 
-    return note_on, note_off
+    return midi_note_on, midi_note_off
 
 
 def to_midi_notes(music21_notes):
