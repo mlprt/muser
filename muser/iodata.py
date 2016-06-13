@@ -14,10 +14,11 @@ import music21
 from scipy.io import wavfile
 
 SND_DTYPES = {'int16': 16, 'int32': 32}
-"""dict: Data types that SciPy can import from `.wav`"""
+""" Data types that SciPy can import from `.wav`"""
 
 NOTE_ON = 0x90
 NOTE_OFF = 0x80
+ALL_NOTES_OFF = 0x7B
 """ MIDI parameters. """
 
 
@@ -73,6 +74,15 @@ def send_note(midi_out, note):
     event = to_midi_note(note)
     midi_out.send_message(event)
 
+def midi_all_off(midi_out):
+    """ Send the 'all notes off' MIDI event.
+
+    NOTE: Does not work with Pianoteq 5.5, received as a note on event.
+
+    Parameters:
+        midi_out (rtmidi.MidiOut):
+    """
+    midi_out.send_message((ALL_NOTES_OFF, 0, 0))
 
 def to_midi_note(note):
     """ Return tuples specifying on/off MIDI note events for a music21 Note.
