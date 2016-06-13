@@ -49,48 +49,52 @@ for b in range(batches):
     notes = muser.sequencer.get_note_batch(batch_size)
     note_batches.append(muser.iodata.to_midi_notes(notes))
 note_toggle = False
-recording = np.zeros((batches, batch_size))
+recording = np.zeros((batches, batch_size), dtype=np.dtype(object))
 buffers = []
 
 # `jack` monitor to capture audio buffers from synthesizer
 @audio_client.set_process_callback
 def process(frames):
+    global note_toggle
     try:
         if note_toggle:
             buffer = inport_1.get_array()
-            print('hi')
-            if numpy.any(buffer):
+            # record entire note (until silence)
+            if np.any(buffer):
                 buffers.append(buffer)
-                print(len(buffers))
             else:
                 note_toggle = False
     except UnboundLocalError:
+        print('hi')
         pass
 
-try:
-    # activate `jack` client and connect to synthesizer output
-    with audio_client:
+
+with audio_client:
+    try:
+        # connect `rtmidi` MidiOut instance to synthesizer MIDI input
+        audio_client.connect(rtmidi_out_name, synth_midi_in)
+        # connect synthesizer stereo audio outputs to `jack` client inputs
         audio_client.connect(synth_out_1, "{}:in_1".format(audio_client_name))
         audio_client.connect(synth_out_2, "{}:in_2".format(audio_client_name))
-        audio_client.connect(rtmidi_out_name, synth_midi_in)
+
         for b, notes in enumerate(note_batches):
             for n, note in enumerate(notes):
                 note_toggle = True
                 send_events((note[0],))
                 while note_toggle:
-                    # `jack` listening in process()
-                    time.sleep(0.5)
-                    #print(np.max(buffers[-1]))
+                    # `jack` listening through process()
+                    pass
                 send_events((note[1],))
+                print(len(buffers))
                 recording[b][n] = buffers
                 buffers = []
 
-except (KeyboardInterrupt, SystemExit):
-    try:
+    except (KeyboardInterrupt, SystemExit):
+        # close `rtmidi` and `jack` clients
         del rtmidi_out
-    except NameError:
-        pass
-    raise
+        audio_client.deactivate()
+        audio_client.close()
+        raise
 
 # Neural network parameters
 inputs = buffer_size
