@@ -12,21 +12,21 @@ TODO: Switch to TensorFlow batch 1D FFT when supported by OpenCL
 """
 
 import numpy as np
+import time
 import tensorflow as tf
 import muser.iodata
+import muser.sequencer
 import muser.fft
 import jack
-import music21
 import matplotlib.pyplot as plt
 
-PIANO_LO = 21
-PIANO_HI = 108
-""" MIDI pitch range of 88-key piano """
 
-# Synthesizer MIDI outport names
-capture_1 = "Pianoteq55:out_1"
-capture_2 = "Pianoteq55:out_2"
+# Synthesizer MIDI ports
+synth_out_1 = "Pianoteq55:out_1"
+synth_out_2 = "Pianoteq55:out_2"
+synth_midi_in = "Pianoteq55:midi_in"
 
+# `jack` initialization
 audio_client_name = "MuserAudioClient"
 audio_client = jack.Client(audio_client_name)
 inport_1 = audio_client.inports.register("in_1")
@@ -34,57 +34,63 @@ inport_2 = audio_client.inports.register("in_2")
 buffer_size = audio_client.blocksize
 sample_rate = audio_client.samplerate
 
-midi_out, _ = muser.iodata.init_midi_out()
-send_events = muser.iodata.get_send_events(midi_out)
+# `rtmidi` initialization
+rtmidi_out = muser.iodata.init_midi_out()
+send_events = muser.iodata.get_send_events(rtmidi_out)
+rtmidi_out_name = "a2j:MuserRtmidiClient [131] (capture): Virtual Port Out 0"
 
 # Training parameters
 batch_size = 64
 batches = 10
 learning_rate = 0.001
 
-
-def get_note_batch(batch_size, pitch_lo=PIANO_LO, pitch_hi=PIANO_HI,
-                   velocity_lo=60, velocity_hi=120):
-    """ Return a batch of MIDI notes.
-
-    Arguments:
-        batch_size (int): Number of pitches to return
-        note_lo (int): MIDI pitch of lowest note in desired range
-        note_hi (int): MIDI pitch of highest note in desired range
-
-    Returns:
-        notes (list): List of music21 Note objects
-    """
-    notes = []
-    for n in range(batch_size):
-        # NOTE: not necessary to use music21 for now... return MIDI event tuples
-        note = music21.note.Note(np.random.randint(pitch_lo, pitch_hi + 1))
-        velocity = np.random.randint(velocity_lo, velocity_hi + 1)
-        note.volume.velocityScalar = velocity
-        notes.append(note)
-        notes = muser.iodata.to_midi_notes(notes)
-
-    return notes
-
-
-notes_batches = [get_note_batch(batch_size) for b in range(batches)]
+note_batches = []
+for b in range(batches):
+    notes = muser.sequencer.get_note_batch(batch_size)
+    note_batches.append(muser.iodata.to_midi_notes(notes))
+note_toggle = False
+recording = np.zeros((batches, batch_size))
+buffers = []
 
 # `jack` monitor to capture audio buffers from synthesizer
-buffers = []
 @audio_client.set_process_callback
 def process(frames):
-    buffer = inport_1.get_array()
-    # TODO: record output corresponding to rtmidi sends, collate with MIDI notes
-    buffers.append(buffer)
-
-# activate `jack` client and connect to synthesizer output
-with audio_client:
-    audio_client.connect(capture_1, "{}:in_1".format(audio_client_name))
-    audio_client.connect(capture_2, "{}:in_2".format(audio_client_name))
-    for notes in notes_batches:
-        # TODO: fix muser.iodata pausing/offsets
+    try:
+        if note_toggle:
+            buffer = inport_1.get_array()
+            print('hi')
+            if numpy.any(buffer):
+                buffers.append(buffer)
+                print(len(buffers))
+            else:
+                note_toggle = False
+    except UnboundLocalError:
         pass
-    input()
+
+try:
+    # activate `jack` client and connect to synthesizer output
+    with audio_client:
+        audio_client.connect(synth_out_1, "{}:in_1".format(audio_client_name))
+        audio_client.connect(synth_out_2, "{}:in_2".format(audio_client_name))
+        audio_client.connect(rtmidi_out_name, synth_midi_in)
+        for b, notes in enumerate(note_batches):
+            for n, note in enumerate(notes):
+                note_toggle = True
+                send_events((note[0],))
+                while note_toggle:
+                    # `jack` listening in process()
+                    time.sleep(0.5)
+                    #print(np.max(buffers[-1]))
+                send_events((note[1],))
+                recording[b][n] = buffers
+                buffers = []
+
+except (KeyboardInterrupt, SystemExit):
+    try:
+        del rtmidi_out
+    except NameError:
+        pass
+    raise
 
 # Neural network parameters
 inputs = buffer_size

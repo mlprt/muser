@@ -21,7 +21,7 @@ NOTE_OFF = 0x80
 """ MIDI parameters. """
 
 
-def init_midi_out(ports=1):
+def init_midi_out(ports=1, name="MuserRtmidiClient"):
     """ Return `rtmidi` client with given number of output ports.
 
     Parameters:
@@ -30,7 +30,7 @@ def init_midi_out(ports=1):
     Returns:
         midi_out (rtmidi.MidiOut): `rtmidi` output client.
     """
-    midi_out = rtmidi.MidiOut()
+    midi_out = rtmidi.MidiOut(name=name)
     for i in range(ports):
         port_name = "Virtual Port Out {}".format(i)
         midi_out.open_virtual_port(port_name)
