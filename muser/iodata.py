@@ -74,15 +74,21 @@ def send_note(midi_out, note):
     event = to_midi_note(note)
     midi_out.send_message(event)
 
-def midi_all_off(midi_out):
-    """ Send the 'all notes off' MIDI event.
-
-    NOTE: Does not work with Pianoteq 5.5, received as a note on event.
+def midi_all_notes_off(midi_out, midi_basic=False, midi_range=(0, 128)):
+    """ Send MIDI event(s) to release (turn off) all notes.
 
     Parameters:
-        midi_out (rtmidi.MidiOut):
+        midi_out (rtmidi.MidiOut): An `rtmidi` MIDI output client
+        midi_basic (bool): Send NOTE_OFF events for each note if True, and
+                           single ALL_NOTES_OFF event if False
+        midi_range (tuple): Range of pitches for NOTE_OFF events if midi_basic
+                            (defaults to entire MIDI pitch range)
     """
-    midi_out.send_message((ALL_NOTES_OFF, 0, 0))
+    if midi_basic:
+        for midi_pitch in range(*midi_range):
+            midi_out.send_message((NOTE_OFF, midi_pitch, 0))
+    else:
+        midi_out.send_message((ALL_NOTES_OFF, 0, 0))
 
 def to_midi_note(note):
     """ Return tuples specifying on/off MIDI note events for a music21 Note.

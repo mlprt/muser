@@ -47,22 +47,23 @@ note_batches = []
 for b in range(batches):
     notes = muser.sequencer.get_note_batch(batch_size)
     note_batches.append(muser.iodata.to_midi_notes(notes))
-note_toggle = False
 recordings = np.zeros((batches, batch_size), dtype=np.dtype(object))
-buffers = []
 
-# `jack` monitor to capture audio buffers from synthesizer
+buffers = []
+note_toggle = False
+
+# `jack` monitor
 @audio_client.set_process_callback
 def process(frames):
     global note_toggle
     if note_toggle:
         buffer = inport_1.get_array()
         # record entire note (until silence)
+        # loses buffers if check longer than buffer, assuming one monitor thread
         if np.any(buffer):
             buffers.append(buffer)
         else:
             note_toggle = False
-
 
 with audio_client:
     try:
@@ -84,8 +85,9 @@ with audio_client:
                 buffers = []
 
     except (KeyboardInterrupt, SystemExit):
-        # send "all notes off" signal to synthesizer
-        muser.sequencer.midi_all_off(rtmidi_out)
+        print('\nUser interrupt, quitting!')
+        #  synthesizer
+        muser.iodata.midi_all_notes_off(rtmidi_out, midi_basic=True)
         # close `rtmidi` and `jack` clients
         del rtmidi_out
         audio_client.deactivate()
