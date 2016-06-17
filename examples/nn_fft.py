@@ -20,6 +20,8 @@ import jack
 import matplotlib.pyplot as plt
 import json
 
+N_MIDI_NOTES = 127
+
 # Synthesizer MIDI ports
 synth_out_1 = "Pianoteq55:out_1"
 synth_out_2 = "Pianoteq55:out_2"
@@ -47,21 +49,26 @@ note_batches = []
 for b in range(batches):
     notes = muser.sequencer.get_note_batch(batch_size)
     note_batches.append(muser.iodata.to_midi_notes(notes))
-recordings = np.zeros((batches, batch_size), dtype=np.dtype(object))
 
-buffers = []
+# storage of results
+rec_dtype = np.dtype([('note_vector', np.uint8, N_MIDI_NOTES),
+                      ('buffers', object)])
+recordings = np.ndarray([batches, batch_size], dtype=rec_dtype)
+buffers = np.ndarray([0, buffer_size])
+
 note_toggle = False
 
 # `jack` monitor
 @audio_client.set_process_callback
 def process(frames):
     global note_toggle
+    global buffers
     if note_toggle:
-        buffer = inport_1.get_array()
+        buffer_ = inport_1.get_array()
         # record entire note (until silence)
         # loses buffers if check longer than buffer, assuming one monitor thread
-        if np.any(buffer):
-            buffers.append(buffer)
+        if np.any(buffer_):
+            buffers = np.append(buffers, [buffer_], axis=0)
         else:
             note_toggle = False
 
@@ -81,8 +88,13 @@ with audio_client:
                     # `jack` listening through process()
                     pass
                 send_events((note[1],))
-                recordings[b][n] = buffers
-                buffers = []
+                # TODO: note_vectors used throughout as struct for MIDI chords
+                note_vector = np.array([note[0][2] if i==note[0][1] else 0
+                                for i in range(N_MIDI_NOTES)], dtype=np.uint8)
+                recordings[b][n]['note_vector'] = note_vector
+                recordings[b][n]['buffers'] = buffers
+
+                buffers = np.ndarray([0, buffer_size])
 
     except (KeyboardInterrupt, SystemExit):
         print('\nUser interrupt, quitting!')
@@ -94,10 +106,14 @@ with audio_client:
         audio_client.close()
         raise
 
+quit()
+# FFT for each recorded buffer
+# ffts = np.zeros_like(recordings)
+
 # store audio results
-with open('recordings.json', 'w') as recordings_file:
-    json.dump(recordings, recordings_file, sort_keys=True, indent=4,
-              ensure_ascii=False)
+#with open('recordings.json', 'w') as recordings_file:
+#    json.dump(recordings, recordings_file, sort_keys=True, indent=4,
+#              ensure_ascii=False)
 
 # Neural network parameters
 inputs = buffer_size
