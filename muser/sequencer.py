@@ -23,7 +23,7 @@ def notation_to_notes(notation):
 
 def get_note_batch(batch_size, pitch_lo=PIANO_LO, pitch_hi=PIANO_HI,
                    velocity_lo=60, velocity_hi=120):
-    """ Return a batch of `music21` Note objects.
+    """ Return a random batch of `music21` Note objects.
 
     TODO: non-MIDI range input
 
@@ -39,7 +39,7 @@ def get_note_batch(batch_size, pitch_lo=PIANO_LO, pitch_hi=PIANO_HI,
     for n in range(batch_size):
         note = music21.note.Note(np.random.randint(pitch_lo, pitch_hi + 1))
         velocity = np.random.randint(velocity_lo, velocity_hi + 1)
-        note.volume.velocityScalar = velocity
+        note.volume.velocity = velocity
         notes.append(note)
 
     return notes
