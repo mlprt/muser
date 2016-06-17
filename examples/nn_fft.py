@@ -47,7 +47,7 @@ learning_rate = 0.001
 
 note_batches = []
 for b in range(batches):
-    notes = muser.sequencer.get_note_batch(batch_size)
+    notes = map(muser.sequencer.get_note, [None] * batch_size)
     note_batches.append(muser.iodata.to_midi_notes(notes))
 
 # storage of results
@@ -93,7 +93,7 @@ with audio_client:
                                 for i in range(N_MIDI_NOTES)], dtype=np.uint8)
                 recordings[b][n]['note_vector'] = note_vector
                 recordings[b][n]['buffers'] = buffers
-
+                print(note_vector)
                 buffers = np.ndarray([0, buffer_size])
 
     except (KeyboardInterrupt, SystemExit):
