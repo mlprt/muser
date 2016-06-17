@@ -45,10 +45,12 @@ batch_size = 1
 batches = 1
 learning_rate = 0.001
 
-note_batches = []
-for b in range(batches):
-    notes = map(muser.sequencer.get_note, [None] * batch_size)
-    note_batches.append(muser.iodata.to_midi_notes(notes))
+# generate note batches
+def lmap(*args):
+    return list(map(*args))
+def batch(*args):
+    return lmap(muser.sequencer.get_note, [None] * batch_size)
+note_batches = lmap(batch, [None] * batches)
 
 # storage of results
 rec_dtype = np.dtype([('note_vector', np.uint8, N_MIDI_NOTES),
@@ -81,7 +83,8 @@ with audio_client:
         audio_client.connect(synth_out_2, "{}:in_2".format(audio_client_name))
 
         for b, notes in enumerate(note_batches):
-            for n, note in enumerate(notes):
+            midi_notes = muser.iodata.to_midi_notes(notes)
+            for n, note in enumerate(midi_notes):
                 note_toggle = True
                 send_events((note[0],))
                 while note_toggle:
@@ -93,7 +96,6 @@ with audio_client:
                                 for i in range(N_MIDI_NOTES)], dtype=np.uint8)
                 recordings[b][n]['note_vector'] = note_vector
                 recordings[b][n]['buffers'] = buffers
-                print(note_vector)
                 buffers = np.ndarray([0, buffer_size])
 
     except (KeyboardInterrupt, SystemExit):
