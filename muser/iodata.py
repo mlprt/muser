@@ -88,34 +88,20 @@ def to_midi_note_events(pitch_vector, velocity=100, velocity_vector=None):
         pitch_vector (np.ndarray): The vector of MIDI pitches.
 
     Returns:
-        midi_note_on (tuple): Parameters for the MIDI NOTE_ON event
-        midi_note_off (tuple): Parameters for the MIDI NOTE_OFF event
+        note_on_events (np.ndarray): MIDI NOTE_ON event parameters
+        note_off_events (np.ndarray): MIDI NOTE_OFF event parameters
     """
     midi_pitches = np.flatnonzero(pitch_vector)
     n = len(midi_pitches)
     if velocity_vector is None:
         velocity_vector = np.full(n, velocity, dtype=np.uint8)
-    note_events_on = np.full((n, 3), NOTE_ON, dtype=np.uint8)
-    note_events_on[1] = midi_pitches
-    note_events_on[2] = velocity_vector
-    note_events_off = np.copy(note_events_on)
-    note_events_off[0] = np.full(n, NOTE_OFF, dtype=np.uint8)
+    note_on_events = np.full((3, n), NOTE_ON, dtype=np.uint8)
+    note_on_events[1] = midi_pitches
+    note_on_events[2] = velocity_vector
+    note_off_events = np.copy(note_on_events)
+    note_off_events[0] = np.full(n, NOTE_OFF, dtype=np.uint8)
 
-    return note_events_on.T, note_events_off.T
-
-
-def to_midi_notes():
-    """ Convert music21 notes to tuples specifying MIDI events.
-
-    Parameters:
-        music21_notes (list): List of music21 Note objects to be converted
-
-    Returns:
-        midi_notes (list): Pairs of tuples specifying on/off MIDI note events.
-    """
-    midi_notes = [to_midi_note(note) for note in music21_notes]
-
-    return midi_notes
+    return note_on_events.T, note_off_events.T
 
 
 def get_to_sample_index(sample_frq):
