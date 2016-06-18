@@ -64,16 +64,6 @@ def get_send_events(midi_out):
     return send_events
 
 
-def send_note(midi_out, note):
-    """ Send a music21.note.Note as a MIDI event.
-
-    Parameters:
-        midi_out (rtmidi.MidiOut):
-        note (music21.note.Note):
-    """
-    event = to_midi_note(note)
-    midi_out.send_message(event)
-
 def midi_all_notes_off(midi_out, midi_basic=False, midi_range=(0, 128)):
     """ Send MIDI event(s) to release (turn off) all notes.
 
@@ -90,25 +80,31 @@ def midi_all_notes_off(midi_out, midi_basic=False, midi_range=(0, 128)):
     else:
         midi_out.send_message((ALL_NOTES_OFF, 0, 0))
 
-def to_midi_note(note):
-    """ Return tuples specifying on/off MIDI note events for a music21 Note.
+
+def to_midi_note_events(pitch_vector, velocity=100, velocity_vector=None):
+    """ Return tuples specifying on/off MIDI note events based on vectors.
 
     Parameters:
-        music21_note (music21.note.Note): The Note object for conversion
+        pitch_vector (np.ndarray): The vector of MIDI pitches.
 
     Returns:
         midi_note_on (tuple): Parameters for the MIDI NOTE_ON event
         midi_note_off (tuple): Parameters for the MIDI NOTE_OFF event
     """
-    midi_pitch = note.pitch.midi
-    velocity = note.volume.velocity
-    midi_note_on = (NOTE_ON, midi_pitch, velocity)
-    midi_note_off = (NOTE_OFF, midi_pitch, velocity)
+    midi_pitches = np.flatnonzero(pitch_vector)
+    n = len(midi_pitches)
+    if velocity_vector is None:
+        velocity_vector = np.full(n, velocity, dtype=np.uint8)
+    note_events_on = np.full((n, 3), NOTE_ON, dtype=np.uint8)
+    note_events_on[1] = midi_pitches
+    note_events_on[2] = velocity_vector
+    note_events_off = np.copy(note_events_on)
+    note_events_off[0] = np.full(n, NOTE_OFF, dtype=np.uint8)
 
-    return midi_note_on, midi_note_off
+    return note_events_on.T, note_events_off.T
 
 
-def to_midi_notes(music21_notes):
+def to_midi_notes():
     """ Convert music21 notes to tuples specifying MIDI events.
 
     Parameters:

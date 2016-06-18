@@ -70,7 +70,7 @@ def random_chord(chord_size=3, pitch_range=None, velocity=None,
     """
     notes = []
     for n in range(chord_size):
-        notes.append(get_note(pitch_range=pitch_range, velocity=velocity,
+        notes.append(random_note(pitch_range=pitch_range, velocity=velocity,
                  velocity_range=velocity_range))
         if unique:
             # TODO: remove current pitch from vector for next pass
