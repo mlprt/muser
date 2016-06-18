@@ -15,6 +15,7 @@ import numpy as np
 import tensorflow as tf
 import muser.iodata
 import muser.sequencer
+import muser.utils
 import muser.fft
 import jack
 import matplotlib.pyplot as plt
@@ -41,16 +42,18 @@ send_events = muser.iodata.get_send_events(rtmidi_out)
 rtmidi_out_name = "a2j:MuserRtmidiClient [131] (capture): Virtual Port Out 0"
 
 # Training parameters
+chord_size = 1
 batch_size = 1
 batches = 1
 learning_rate = 0.001
 
 # generate note batches
-note_batches = muser.utils.get_batches(muser.sequencer.get_note, batches,
-                                       batch_size)
+chord_batches = muser.utils.get_batches(muser.sequencer.random_pitch_vector,
+                                        batches, batch_size, [chord_size])
 
 # storage of results
-rec_dtype = np.dtype([('note_vector', np.uint8, N_MIDI_NOTES),
+# TODO: velocity vectors
+rec_dtype = np.dtype([('pitch_vector', np.uint8, N_MIDI_NOTES),
                       ('buffers', object)])
 recordings = np.ndarray([batches, batch_size], dtype=rec_dtype)
 buffers = np.ndarray([0, buffer_size])
@@ -79,20 +82,17 @@ with audio_client:
         audio_client.connect(synth_out_1, "{}:in_1".format(audio_client_name))
         audio_client.connect(synth_out_2, "{}:in_2".format(audio_client_name))
 
-        for b, notes in enumerate(note_batches):
-            midi_notes = muser.iodata.to_midi_notes(notes)
-            for n, note in enumerate(midi_notes):
+        for b, batch in enumerate(chord_batches):
+            for p, pitch_vector in enumerate(batch):
+                events = muser.iodata.to_midi_note_events(pitch_vector)
                 note_toggle = True
-                send_events((note[0],))
+                send_events(events[0])
                 while note_toggle:
                     # `jack` listening through process()
                     pass
-                send_events((note[1],))
-                # TODO: note_vectors used throughout as struct for MIDI chords
-                note_vector = np.array([note[0][2] if i==note[0][1] else 0
-                                for i in range(N_MIDI_NOTES)], dtype=np.uint8)
-                recordings[b][n]['note_vector'] = note_vector
-                recordings[b][n]['buffers'] = buffers
+                send_events(events[1])
+                recordings[b][p]['pitch_vector'] = pitch_vector
+                recordings[b][p]['buffers'] = buffers
                 buffers = np.ndarray([0, buffer_size])
 
     except (KeyboardInterrupt, SystemExit):
