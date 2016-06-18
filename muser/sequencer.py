@@ -24,7 +24,8 @@ def notation_to_notes(notation):
 
     return notes
 
-def get_note(pitch=None, pitch_range=None, velocity=None, velocity_range=None):
+
+def random_note(pitch=None, pitch_range=None, velocity=None, velocity_range=None):
     """ Return a random `music21` Note object.
 
     Parameters:
@@ -51,7 +52,7 @@ def get_note(pitch=None, pitch_range=None, velocity=None, velocity_range=None):
     return note
 
 
-def get_chord(chord_size=3, pitch_range=None, velocity=None,
+def random_chord(chord_size=3, pitch_range=None, velocity=None,
               velocity_range=None, unique=True):
     """ Return a random `music21` Chord object.
 
@@ -60,9 +61,8 @@ def get_chord(chord_size=3, pitch_range=None, velocity=None,
     Parameters:
         chord_size (int): Number of notes in the chord
         pitch_range (tuple):
-        velocity (int): Constant velocity. If `None`, randomly assigned per note
+        velocity (int): Constant velocity. If `None`, randomly assigned.
         velocity_range (tuple): Range of velocities for random assignment
-                                (if None, relays to `get_note`)
         unique (bool): If `True`, no duplicate pitches in returned chord
 
     Returns:
@@ -78,3 +78,22 @@ def get_chord(chord_size=3, pitch_range=None, velocity=None,
     chord = music21.chord.Chord(notes)
 
     return chord
+
+
+def chord_to_pitch_vector(chord, pitch_range=None):
+    """ Return a MIDI pitch vector for a `music21` Chord object. """
+    if pitch_range is None:
+        pitch_range = (VELOCITY_LO, VELOCITY_HI+1)
+    pitch_vector = np.zeros(VELOCITY_HI)
+    pitch_vector[[pitch.midi for pitch in chord.pitches]] = 1
+    pitch_vector = pitch_vector[slice(*pitch_range)]
+
+    return pitch_vector
+
+
+def note_to_pitch_vector(note, pitch_range=None):
+    """ Return a MIDI pitch vector for a `music21` Note object. """
+    chord = music21.chord.Chord([note])
+    pitch_vector = chord_to_pitch_vector(chord, pitch_range=pitch_range)
+
+    return pitch_vector
