@@ -46,11 +46,8 @@ batches = 1
 learning_rate = 0.001
 
 # generate note batches
-def lmap(*args):
-    return list(map(*args))
-def batch(*args):
-    return lmap(muser.sequencer.get_note, [None] * batch_size)
-note_batches = lmap(batch, [None] * batches)
+note_batches = muser.utils.get_batches(muser.sequencer.get_note, batches,
+                                       batch_size)
 
 # storage of results
 rec_dtype = np.dtype([('note_vector', np.uint8, N_MIDI_NOTES),
