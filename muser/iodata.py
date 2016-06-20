@@ -132,54 +132,32 @@ def to_midi_note_events(pitch_vector, velocity_vector=None, velocity=100):
     return note_on_events.T, note_off_events.T
 
 
-def get_to_sample_index(sample_frq):
-    """Return function that converts time to sample index for given sample rate.
+def to_sample_index(time, sample_rate):
+    """Return sample index closest to given time.
 
     Parameters:
-        sample_frq (int):
+        time (float): Time relative to the start of sample indexing.
+        sample_rate (int): Rate of sampling for the recording.
 
     Returns:
-        to_sample_index (function):
+        sample_index (int): Index of the sample taken nearest to `time`.
     """
-    def to_sample_index(time):
-        """ Return sample index corresponding to a given time.
+    sample_index = int(time * sample_rate)
 
-        Parameters:
-            time (float, int):
-
-        Returns:
-
-        """
-        def to_sample(time):
-            try:
-                return int(time * sample_frq)
-            except TypeError:  # time not specified or specified badly
-                e = "Real local endpoints must be specified! (t_endp)"
-                raise TypeError(e)
-        try:
-            samples = [to_sample(t) for t in time]
-
-            return samples
-
-        except TypeError:  # time not iterable
-            sample = to_sample(time)
-
-            return sample
-
-    return to_sample_index
+    return sample_index
 
 
 def unit_snd(snd, factor=None):
     """ Scale elements of an array of wav data from -1 to 1.
 
-    Default factor is determined from `snd.dtype`, corresponding to the format imported by `scipy.io.wavfile`. Can scale other types of data if factor is appropriately specified and data object can be scaled element-wise with the division operator, as for np.ndarray.
+    Default factor is determined from `snd.dtype`, corresponding to the format imported by `scipy.io.wavfile`. Can scale other types of data if factor is appropriately specified and data object can be scaled element-wise with the division operator, as for `np.ndarray`.
 
     Parameters:
         snd (np.ndarray): Data (audio from `.wav`) to be scaled.
         factor (int): Divide elements of snd by this number.
 
     Returns:
-        scaled (np.ndarray): Same shape as snd, with elements scaled by factor.
+        scaled (np.ndarray): Same shape as `snd`, with elements scaled by factor.
     """
     if factor is None:
         factor = 2. ** (SND_DTYPES[snd.dtype.name] - 1)
@@ -188,15 +166,15 @@ def unit_snd(snd, factor=None):
     return scaled
 
 
-def wav_read_scaled(wavfile_name):
+def wav_read_unit(wavfile_name):
     """ Return contents of `.wav` scaled from -1 to 1.
 
     Parameters:
-        wavfile_name (str):
+        wavfile_name (str): Name of the `.wav` file to read.
 
     Returns:
-        sample_rate (int):
-        snd (np.ndarray):
+        sample_rate (int): The file's audio sampling rate.
+        snd (np.ndarray): The file's audio samples as `float`.
     """
     sample_rate, snd = wavfile.read(wavfile_name)
     snd = unit_snd(snd)
