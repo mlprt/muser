@@ -23,12 +23,13 @@ import json
 N_MIDI_NOTES = 127
 
 # Synthesizer MIDI ports
-synth_out_1 = "Pianoteq55:out_1"
-synth_out_2 = "Pianoteq55:out_2"
+synth_outports = ["Pianoteq55:out_1", "Pianoteq55:out_2"]
 synth_midi_in = "Pianoteq55:midi_in"
 
+channels = len(synth_outports)
+
 # `jack` initialization
-audio_client = muser.iodata.init_jack_client(inports=2)
+audio_client = muser.iodata.init_jack_client(inports=channels)
 buffer_size = audio_client.blocksize
 sample_rate = audio_client.samplerate
 
@@ -51,7 +52,7 @@ chord_batches = muser.utils.get_batches(muser.sequencer.random_pitch_vector,
 rec_dtype = np.dtype([('pitch_vector', np.uint8, N_MIDI_NOTES),
                       ('buffers', object)])
 recordings = np.ndarray([batches, batch_size], dtype=rec_dtype)
-buffers = np.ndarray([0, buffer_size])
+buffers = np.ndarray([channels, 0, buffer_size])
 
 note_toggle = False
 
@@ -61,19 +62,20 @@ def process(frames):
     global note_toggle
     global buffers
     if note_toggle:
-        buffer_ = audio_client.inports[0].get_array()
+        buffer_ = np.ndarray([channels, 1, buffer_size])
+        for ch in range(channels):
+            buffer_[ch] = audio_client.inports[ch].get_array()
         # record entire note (until silence)
-        # loses buffers if check longer than buffer, assuming one monitor thread
-        if np.any(buffer_):
-            buffers = np.append(buffers, [buffer_], axis=0)
+        if np.any(buffer_[0]):
+            buffers = np.append(buffers, buffer_, axis=1)
         else:
             note_toggle = False
 
 with audio_client:
     try:
         # connect synthesizer stereo audio outputs to `jack` client inputs
-        audio_client.connect(synth_out_1, audio_client.inports[0])
-        audio_client.connect(synth_out_2, audio_client.inports[1])
+        for port_pair in zip(synth_outports, audio_client.inports):
+            audio_client.connect(*port_pair)
 
         for b, batch in enumerate(chord_batches):
             for p, pitch_vector in enumerate(batch):
