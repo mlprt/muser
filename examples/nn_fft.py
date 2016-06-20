@@ -35,7 +35,6 @@ sample_rate = audio_client.samplerate
 # `rtmidi` initialization
 rtmidi_out = muser.iodata.init_rtmidi_out()
 send_events = muser.iodata.get_send_events(rtmidi_out)
-rtmidi_out_name = "a2j:MuserRtmidiClient [131] (capture): out_0"
 
 # Training parameters
 chord_size = 1
@@ -72,11 +71,9 @@ def process(frames):
 
 with audio_client:
     try:
-        # connect `rtmidi` MidiOut instance to synthesizer MIDI input
-        audio_client.connect(rtmidi_out_name, synth_midi_in)
         # connect synthesizer stereo audio outputs to `jack` client inputs
-        audio_client.connect(synth_out_1, "{}:in_1".format(audio_client_name))
-        audio_client.connect(synth_out_2, "{}:in_2".format(audio_client_name))
+        audio_client.connect(synth_out_1, audio_client.inports[0])
+        audio_client.connect(synth_out_2, audio_client.inports[1])
 
         for b, batch in enumerate(chord_batches):
             for p, pitch_vector in enumerate(batch):

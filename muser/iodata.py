@@ -22,19 +22,21 @@ ALL_NOTES_OFF = 0x7B
 """ MIDI parameters. """
 
 
-def init_rtmidi_out(name="MuserRtmidiClient", outports=1):
-    """ Return `rtmidi` output client with given number of ports.
+def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
+    """ Return `rtmidi` output client with opened port.
 
     Parameters:
         name (str): The name of the `rtmidi` client.
-        outports (int): Number of virtual output ports to initialize.
+        outport (int): Virtual output port number to initialize.
 
     Returns:
         midi_out (rtmidi.MidiOut): `rtmidi` output client.
     """
     midi_out = rtmidi.MidiOut(name=name)
-    for o in range(outports):
-        midi_out.open_virtual_port("out_{}".format(o))
+    if midi_out.get_ports():
+        midi_out.open_port(outport)
+    else:
+        midi_out.open_virtual_port("out_{}".format(outport))
 
     return midi_out
 
@@ -60,11 +62,11 @@ def del_jack_client(jack_client):
     jack_client.close()
 
 
-def get_send_events(midi_out):
+def get_send_events(rtmidi_out):
     """ Returns a function that sends MIDI events through `rtmidi`.
 
     Parameters:
-        midi_out (rtmidi.MidiOut): The `rtmidi` output client.
+        rtmidi_out (rtmidi.MidiOut): The `rtmidi` output client.
 
     Returns:
         send_events (function): Client-specific MIDI event sender.
@@ -80,12 +82,12 @@ def get_send_events(midi_out):
             events (list): Tuples specifying MIDI events.
         """
         for event in events:
-            midi_out.send_message(event)
+            rtmidi_out.send_message(event)
 
     return send_events
 
 
-def midi_all_notes_off(midi_out, midi_basic=False, midi_range=(0, 128)):
+def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
     """ Send MIDI event(s) to release (turn off) all notes.
 
     Parameters:
@@ -97,9 +99,9 @@ def midi_all_notes_off(midi_out, midi_basic=False, midi_range=(0, 128)):
     """
     if midi_basic:
         for midi_pitch in range(*midi_range):
-            midi_out.send_message((NOTE_OFF, midi_pitch, 0))
+            rtmidi_out.send_message((NOTE_OFF, midi_pitch, 0))
     else:
-        midi_out.send_message((ALL_NOTES_OFF, 0, 0))
+        rtmidi_out.send_message((ALL_NOTES_OFF, 0, 0))
 
 
 def to_midi_note_events(pitch_vector, velocity_vector=None, velocity=100):
