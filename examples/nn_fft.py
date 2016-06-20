@@ -17,7 +17,6 @@ import muser.iodata
 import muser.sequencer
 import muser.utils
 import muser.fft
-import jack
 import matplotlib.pyplot as plt
 import json
 
@@ -29,17 +28,14 @@ synth_out_2 = "Pianoteq55:out_2"
 synth_midi_in = "Pianoteq55:midi_in"
 
 # `jack` initialization
-audio_client_name = "MuserAudioClient"
-audio_client = jack.Client(audio_client_name)
-inport_1 = audio_client.inports.register("in_1")
-inport_2 = audio_client.inports.register("in_2")
+audio_client = muser.iodata.init_jack_client(inports=2)
 buffer_size = audio_client.blocksize
 sample_rate = audio_client.samplerate
 
 # `rtmidi` initialization
-rtmidi_out = muser.iodata.init_midi_out()
+rtmidi_out = muser.iodata.init_rtmidi_out()
 send_events = muser.iodata.get_send_events(rtmidi_out)
-rtmidi_out_name = "a2j:MuserRtmidiClient [131] (capture): Virtual Port Out 0"
+rtmidi_out_name = "a2j:MuserRtmidiClient [131] (capture): out_0"
 
 # Training parameters
 chord_size = 1
@@ -66,7 +62,7 @@ def process(frames):
     global note_toggle
     global buffers
     if note_toggle:
-        buffer_ = inport_1.get_array()
+        buffer_ = audio_client.inports[0].get_array()
         # record entire note (until silence)
         # loses buffers if check longer than buffer, assuming one monitor thread
         if np.any(buffer_):
@@ -97,12 +93,11 @@ with audio_client:
 
     except (KeyboardInterrupt, SystemExit):
         print('\nUser interrupt, quitting!')
-        #  synthesizer
+        # synthesizer
         muser.iodata.midi_all_notes_off(rtmidi_out, midi_basic=True)
         # close `rtmidi` and `jack` clients
         del rtmidi_out
-        audio_client.deactivate()
-        audio_client.close()
+        muser.iodata.del_jack_client(audio_client)
         raise
 
 quit()

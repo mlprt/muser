@@ -22,21 +22,42 @@ ALL_NOTES_OFF = 0x7B
 """ MIDI parameters. """
 
 
-def init_midi_out(ports=1, name="MuserRtmidiClient"):
-    """ Return `rtmidi` client with given number of output ports.
+def init_rtmidi_out(name="MuserRtmidiClient", outports=1):
+    """ Return `rtmidi` output client with given number of ports.
 
     Parameters:
-        ports (int): Number of virtual output ports to initialize.
+        name (str): The name of the `rtmidi` client.
+        outports (int): Number of virtual output ports to initialize.
 
     Returns:
         midi_out (rtmidi.MidiOut): `rtmidi` output client.
     """
     midi_out = rtmidi.MidiOut(name=name)
-    for i in range(ports):
-        port_name = "Virtual Port Out {}".format(i)
-        midi_out.open_virtual_port(port_name)
+    for o in range(outports):
+        midi_out.open_virtual_port("out_{}".format(o))
 
     return midi_out
+
+
+def init_jack_client(name="MuserJACKClient", inports=0, outports=0):
+    """ Return an inactive `jack` client with registered audio ports. """
+    jack_client = jack.Client(name)
+    for i in range(inports):
+        jack_client.inports.register("in_{}".format(i))
+    for o in range(outports):
+        jack_client.outports.register("out_{}".format(o))
+
+    return jack_client
+
+
+def del_jack_client(jack_client):
+    """ Unregister all ports, deactivate, and close a `jack` client. """
+    jack_client.outports.clear()
+    jack_client.inports.clear()
+    jack_client.midi_outports.clear()
+    jack_client.midi_inports.clear()
+    jack_client.deactivate()
+    jack_client.close()
 
 
 def get_send_events(midi_out):
@@ -81,11 +102,16 @@ def midi_all_notes_off(midi_out, midi_basic=False, midi_range=(0, 128)):
         midi_out.send_message((ALL_NOTES_OFF, 0, 0))
 
 
-def to_midi_note_events(pitch_vector, velocity=100, velocity_vector=None):
+def to_midi_note_events(pitch_vector, velocity_vector=None, velocity=100):
     """ Return tuples specifying on/off MIDI note events based on vectors.
 
+    TODO: General function for events,
+          e.g. note_on_events = to_midi_events(NOTE_ON, vector1, vector2)
+
     Parameters:
-        pitch_vector (np.ndarray): The vector of MIDI pitches.
+        pitch_vector (np.ndarray): The vector of MIDI pitches
+        velocity_vector (np.ndarray): The vector of MIDI velocities
+        velocity (int): Constant velocity in place of `velocity_vector`
 
     Returns:
         note_on_events (np.ndarray): MIDI NOTE_ON event parameters
