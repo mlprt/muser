@@ -71,33 +71,34 @@ def process(frames):
         else:
             note_toggle = False
 
-with audio_client:
-    try:
-        # connect synthesizer stereo audio outputs to `jack` client inputs
-        for port_pair in zip(synth_outports, audio_client.inports):
-            audio_client.connect(*port_pair)
+audio_client.activate()
+try:
+    # connect synthesizer stereo audio outputs to `jack` client inputs
+    for port_pair in zip(synth_outports, audio_client.inports):
+        audio_client.connect(*port_pair)
 
-        for b, batch in enumerate(chord_batches):
-            for p, pitch_vector in enumerate(batch):
-                events = muser.iodata.to_midi_note_events(pitch_vector)
-                note_toggle = True
-                send_events(events[0])
-                while note_toggle:
-                    # `jack` listening through process()
-                    pass
-                send_events(events[1])
-                recordings[b][p]['pitch_vector'] = pitch_vector
-                recordings[b][p]['buffers'] = buffers
-                buffers = np.ndarray([0, buffer_size])
+    for b, batch in enumerate(chord_batches):
+        for p, pitch_vector in enumerate(batch):
+            events = muser.iodata.to_midi_note_events(pitch_vector)
+            note_toggle = True
+            send_events(events[0])
+            while note_toggle:
+                # `jack` listening through process()
+                pass
+            send_events(events[1])
+            recordings[b][p]['pitch_vector'] = pitch_vector
+            recordings[b][p]['buffers'] = buffers
+            buffers = np.ndarray([0, buffer_size])
 
-    except (KeyboardInterrupt, SystemExit):
-        print('\nUser interrupt, quitting!')
-        # synthesizer
-        muser.iodata.midi_all_notes_off(rtmidi_out, midi_basic=True)
-        # close `rtmidi` and `jack` clients
-        del rtmidi_out
-        muser.iodata.del_jack_client(audio_client)
-        raise
+except (KeyboardInterrupt, SystemExit):
+    note_toggle = False
+    print('\nUser or system interrupt, dismantling JACK clients!')
+    # synthesizer
+    muser.iodata.midi_all_notes_off(rtmidi_out, midi_basic=True)
+    # close `rtmidi` and `jack` clients
+    del rtmidi_out
+    muser.iodata.del_jack_client(audio_client)
+    raise
 
 quit()
 # FFT for each recorded buffer
