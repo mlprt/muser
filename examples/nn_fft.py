@@ -19,6 +19,7 @@ import muser.utils
 import muser.fft
 import matplotlib.pyplot as plt
 import scipy.io.wavfile
+import time
 
 N_MIDI_PITCHES = 127
 
@@ -58,16 +59,30 @@ buffers = np.ndarray([channels, 0, buffer_size])
 buffer_ = np.ndarray([channels, 1, buffer_size])
 note_toggle = False
 
+# `jack` timing checks -- verify this code isn't interfering with real-time ops
+xx = 0
+yy = 0
+count = 0
+
 # `jack` monitor
 @audio_client.set_process_callback
 def process(frames):
     global buffers
     global buffer_
     global note_toggle
+    global xx
+    global yy
+    global count
     if note_toggle:
+        a_ = time.time()
         for ch in range(channels):
             buffer_[ch] = audio_client.inports[ch].get_array()
+        b_ = time.time()
         buffers = np.append(buffers, buffer_, axis=1)
+        c_ = time.time()
+        xx += b_ - a_
+        yy += c_ - b_
+        count += 1
 
 audio_client.activate()
 try:
@@ -91,6 +106,10 @@ try:
             buffers = np.ndarray([channels, 0, buffer_size])
 
 except (KeyboardInterrupt, SystemExit):
+    xx /= count
+    yy /= count
+    print("xx: {}, yy: {}, count: {}".format(xx, yy, count))
+    print("Buffer time: {}".format(buffer_size/float(sample_rate)))
     note_toggle = False
     print('\nUser or system interrupt, dismantling JACK clients!')
     # synthesizer
