@@ -25,7 +25,7 @@ ALL_NOTES_OFF = 0x7B
 def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
     """ Return `rtmidi` output client with opened port.
 
-    Parameters:
+    Args:
         name (str): The name of the `rtmidi` client.
         outport (int): Virtual output port number to initialize.
 
@@ -65,7 +65,7 @@ def del_jack_client(jack_client):
 def get_send_events(rtmidi_out):
     """ Returns a function that sends MIDI events through `rtmidi`.
 
-    Parameters:
+    Args:
         rtmidi_out (rtmidi.MidiOut): The `rtmidi` output client.
 
     Returns:
@@ -75,10 +75,10 @@ def get_send_events(rtmidi_out):
     def send_events(events):
         """ Send a series of MIDI events out through rtmidi.
 
-        Events sent without pause, so intended for sending series of events that
-        should be heard simultaneously (chords).
+        Events sent without pause, so intended for sending series of events
+        that should be heard simultaneously (chords).
 
-        Parameters:
+        Args:
             events (list): Tuples specifying MIDI events.
         """
         for event in events:
@@ -90,12 +90,13 @@ def get_send_events(rtmidi_out):
 def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
     """ Send MIDI event(s) to release (turn off) all notes.
 
-    Parameters:
+    Args:
         midi_out (rtmidi.MidiOut): An `rtmidi` MIDI output client
-        midi_basic (bool): Send NOTE_OFF events for each note if True, and
-                           single ALL_NOTES_OFF event if False
+        midi_basic (bool): Switches MIDI event type to turn notes off.
+            Use NOTE_OFF events for each note if True, and single
+            ALL_NOTES_OFF event if False.
         midi_range (tuple): Range of pitches for NOTE_OFF events if midi_basic
-                            (defaults to entire MIDI pitch range)
+            Defaults to entire MIDI pitch range.
     """
     if midi_basic:
         for midi_pitch in range(*midi_range):
@@ -110,7 +111,7 @@ def to_midi_note_events(pitch_vector, velocity_vector=None, velocity=100):
     TODO: General function for events,
           e.g. note_on_events = to_midi_events(NOTE_ON, vector1, vector2)
 
-    Parameters:
+    Args:
         pitch_vector (np.ndarray): The vector of MIDI pitches
         velocity_vector (np.ndarray): The vector of MIDI velocities
         velocity (int): Constant velocity in place of `velocity_vector`
@@ -135,7 +136,7 @@ def to_midi_note_events(pitch_vector, velocity_vector=None, velocity=100):
 def to_sample_index(time, sample_rate):
     """Return sample index closest to given time.
 
-    Parameters:
+    Args:
         time (float): Time relative to the start of sample indexing.
         sample_rate (int): Rate of sampling for the recording.
 
@@ -152,7 +153,7 @@ def unit_snd(snd, factor=None):
 
     Default factor is determined from `snd.dtype`, corresponding to the format imported by `scipy.io.wavfile`. Can scale other types of data if factor is appropriately specified and data object can be scaled element-wise with the division operator, as for `np.ndarray`.
 
-    Parameters:
+    Args:
         snd (np.ndarray): Data (audio from `.wav`) to be scaled.
         factor (int): Divide elements of snd by this number.
 
@@ -169,7 +170,7 @@ def unit_snd(snd, factor=None):
 def wav_read_unit(wavfile_name):
     """ Return contents of `.wav` scaled from -1 to 1.
 
-    Parameters:
+    Args:
         wavfile_name (str): Name of the `.wav` file to read.
 
     Returns:
@@ -182,13 +183,38 @@ def wav_read_unit(wavfile_name):
     return sample_rate, snd
 
 
+def buffers_to_snd(buffers, stereo=True, dtype='int32'):
+    """ Convert a series of JACK buffers to 2-channel SciPy audio.
+
+    Args:
+        buffers (np.ndarray): Series of JACK buffers in a 3D array.
+            Second dimension size is number of buffers, third is `buffer_size`.
+        stereo (bool): If `True`, the two channels of `snd` are taken from
+            `buffers[0:2]`, else both copied from `buffers[0]` (mono).
+        dtype (str): Datatype of the returned array.
+            Should be 'int32' or 'int16' for SciPy compatibility.
+
+    Returns:
+        snd (np.ndarray): SciPy-compatible array of audio frames.
+    """
+    if stereo:
+        buffers_ = buffers[0:2]
+    else:
+        buffers_ = np.concatenate((buffers[0], buffers[0]))
+    snd = buffers_.reshape((2, buffers_.size // 2)).T
+    snd = snd * 2.**(SND_DTYPES[dtype] - 1)
+    snd = snd.astype(dtype)
+
+    return snd
+
+
 def report_midi_event(event, last_frame_time=0, out=sys.stdout):
     """ Print details of a `jack` MIDI event.
 
     NOTE: Does not apply to tuples specifying events, as with `rtmidi`.
     Retaining this material with intent for further `jack` integration.
 
-    Parameters:
+    Args:
         event ():
         last_frame_time (int):
         out ():
