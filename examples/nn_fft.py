@@ -18,7 +18,7 @@ import muser.sequencer
 import muser.utils
 import muser.fft
 import matplotlib.pyplot as plt
-import json
+import scipy.io.wavfile
 
 N_MIDI_PITCHES = 127
 
@@ -39,8 +39,8 @@ send_events = muser.iodata.get_send_events(rtmidi_out)
 
 # Training parameters
 chord_size = 1
-batch_size = 1
-batches = 1
+batch_size = 2
+batches = 2
 learning_rate = 0.001
 
 # generate note batches
@@ -61,17 +61,13 @@ note_toggle = False
 # `jack` monitor
 @audio_client.set_process_callback
 def process(frames):
-    global note_toggle
     global buffers
     global buffer_
+    global note_toggle
     if note_toggle:
         for ch in range(channels):
             buffer_[ch] = audio_client.inports[ch].get_array()
-        # record entire note (until silence)
-        if np.any(buffer_[0]):
-            buffers = np.append(buffers, buffer_, axis=1)
-        else:
-            note_toggle = False
+        buffers = np.append(buffers, buffer_, axis=1)
 
 audio_client.activate()
 try:
@@ -84,13 +80,15 @@ try:
             events = muser.iodata.to_midi_note_events(pitch_vector)
             note_toggle = True
             send_events(events[0])
-            while note_toggle:
-                # `jack` listening through process()
+            while np.any(buffer_[0]) or buffers.shape[1] < 10:
+                # `jack` listening through `process()`
+                # wait for silence, except during first few buffers
                 pass
+            note_toggle = False
             send_events(events[1])
             recordings[b][p]['pitch_vector'] = pitch_vector
             recordings[b][p]['buffers'] = buffers
-            buffers = np.ndarray([0, buffer_size])
+            buffers = np.ndarray([channels, 0, buffer_size])
 
 except (KeyboardInterrupt, SystemExit):
     note_toggle = False
@@ -102,14 +100,17 @@ except (KeyboardInterrupt, SystemExit):
     muser.iodata.del_jack_client(audio_client)
     raise
 
-quit()
-# FFT for each recorded buffer
-# ffts = np.zeros_like(recordings)
-
 # store audio results
-#with open('recordings.json', 'w') as recordings_file:
-#    json.dump(recordings, recordings_file, sort_keys=True, indent=4,
-#              ensure_ascii=False)
+recordings.dump('recordings.pickle')
+
+for b, batch in enumerate(recordings):
+    for p, pitch in enumerate(batch):
+        snd = muser.iodata.buffers_to_snd(pitch['buffers'])
+        wavfile_name = 'b{}p{}.wav'.format(b, p)
+        scipy.io.wavfile.write(wavfile_name, sample_rate, snd)
+
+
+quit()
 
 # Neural network parameters
 inputs = buffer_size
