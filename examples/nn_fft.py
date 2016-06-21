@@ -20,7 +20,7 @@ import muser.fft
 import matplotlib.pyplot as plt
 import json
 
-N_MIDI_NOTES = 127
+N_MIDI_PITCHES = 127
 
 # Synthesizer MIDI ports
 synth_outports = ["Pianoteq55:out_1", "Pianoteq55:out_2"]
@@ -49,11 +49,13 @@ chord_batches = muser.utils.get_batches(muser.sequencer.random_pitch_vector,
 
 # storage of results
 # TODO: velocity vectors
-rec_dtype = np.dtype([('pitch_vector', np.uint8, N_MIDI_NOTES),
+rec_dtype = np.dtype([('pitch_vector', np.uint8, N_MIDI_PITCHES),
                       ('buffers', object)])
 recordings = np.ndarray([batches, batch_size], dtype=rec_dtype)
 buffers = np.ndarray([channels, 0, buffer_size])
 
+# temporary and control variables used by the `jack` monitor
+buffer_ = np.ndarray([channels, 1, buffer_size])
 note_toggle = False
 
 # `jack` monitor
@@ -61,8 +63,8 @@ note_toggle = False
 def process(frames):
     global note_toggle
     global buffers
+    global buffer_
     if note_toggle:
-        buffer_ = np.ndarray([channels, 1, buffer_size])
         for ch in range(channels):
             buffer_[ch] = audio_client.inports[ch].get_array()
         # record entire note (until silence)
