@@ -9,6 +9,9 @@
 *.alac
 *.ogg
 
+# data files
+*.pickle
+
 # images
 *.png
 *.jpg
