@@ -21,13 +21,38 @@ NOTE_OFF = 0x80
 ALL_NOTES_OFF = 0x7B
 """ MIDI parameters. """
 
+JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
+                   'midi_inports':'midi_in_{}', 'midi_outports':'midi_out_{}'}
+""" Types of `jack` ports and their default naming. """
+
+def port_registrar(jack_client, **port_args):
+    """ Register a `jack.Client`'s ports of the given type and number.
+
+    Args:
+        **port_args: Keywords give port type, args give quantity to register.
+            `port_args.keys()` must be a subset of `JACK_PORT_NAMES.keys()`
+    """
+    for port_type, n in port_args.items():
+        ports = getattr(jack_client, port_type)
+        for p in range(n):
+            ports.register(JACK_PORT_NAMES[port_type].format(p))
+
+
+def init_jack_client(name="MuserClient", inports=0, outports=0,
+                     midi_inports=0, midi_outports=0):
+    """ Return an inactive `jack` client with registered ports. """
+    jack_client = jack.Client(name)
+    port_registrar(jack_client, inports=inports, outports=outports,
+                   midi_inports=midi_inports, midi_outports=midi_outports)
+
+    return jack_client
+
 
 class JackAudioCapturer(jack.Client):
-    """ JACK client with support for audio inport capture. """
+    """ JACK client with process capturing audio inports when toggled. """
     def __init__(self, name='CapturerClient', inports=1):
         super().__init__(name=name)
-        for i in range(inports):
-            self.inports.register("in_{}".format(i))
+        port_registrar(self, inports=inports)
         self.capture_toggle = False
         self.empty_captured()
         self._buffer_array = np.zeros([len(self.inports), 1, self.blocksize],
@@ -65,15 +90,14 @@ class JackAudioCapturer(jack.Client):
         return last_buffer_arrays
 
 
-def init_jack_client(name="MuserJACKClient", inports=0, outports=0):
-    """ Return an inactive `jack` client with registered audio ports. """
-    jack_client = jack.Client(name)
-    for i in range(inports):
-        jack_client.inports.register("in_{}".format(i))
-    for o in range(outports):
-        jack_client.outports.register("out_{}".format(o))
-
-    return jack_client
+def disable_jack_client(jack_client):
+    """ Unregister all ports, deactivate, and close a `jack.Client`. """
+    jack_client.outports.clear()
+    jack_client.inports.clear()
+    jack_client.midi_outports.clear()
+    jack_client.midi_inports.clear()
+    jack_client.deactivate()
+    jack_client.close()
 
 
 def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
@@ -93,16 +117,6 @@ def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
         midi_out.open_virtual_port("out_{}".format(outport))
 
     return midi_out
-
-
-def disable_jack_client(jack_client):
-    """ Unregister all ports, deactivate, and close a `jack` client. """
-    jack_client.outports.clear()
-    jack_client.inports.clear()
-    jack_client.midi_outports.clear()
-    jack_client.midi_inports.clear()
-    jack_client.deactivate()
-    jack_client.close()
 
 
 def get_send_events(rtmidi_out):
@@ -270,7 +284,7 @@ def report_midi_event(event, last_frame_time=0, out=sys.stdout):
 
         return
     rprt = "{0} + {1}:\t0x{2}\n".format(last_frame_time,offset,
-                                     binascii.hexlify(indata).decode())
+                                      binascii.hexlify(indata).decode())
     #rprt += "indata: {0}\n".format(indata)
     rprt += "status: {0},\tpitch: {1},\tvel.: {2}\n".format(status, pitch, vel)
     #rprt += "repacked: {0}".format(struct.pack('3B', status, pitch, vel))
