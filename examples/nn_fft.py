@@ -43,16 +43,18 @@ batch_size = 2
 batches = 2
 learning_rate = 0.001
 
-# generate note batches
-chord_batches = muser.utils.get_batches(muser.sequencer.random_pitch_vector,
-                                        batches, batch_size, [chord_size])
-
 # storage of results
 # TODO: velocity vectors
 rec_dtype = np.dtype([('pitch_vector', np.uint8, N_MIDI_PITCHES),
                       ('buffers', object)])
 recordings = np.ndarray([batches, batch_size], dtype=rec_dtype)
 buffers = np.ndarray([channels, 0, buffer_size])
+
+# generate note batches
+random_pitch_vector = muser.sequencer.random_pitch_vector
+recordings['pitch_vector'] = muser.utils.get_batches(random_pitch_vector,
+                                                      batches, batch_size,
+                                                      [chord_size])
 
 # temporary and control variables used by the `jack` monitor
 buffer_ = np.ndarray([channels, 1, buffer_size])
@@ -75,8 +77,9 @@ try:
     for port_pair in zip(synth_outports, audio_client.inports):
         audio_client.connect(*port_pair)
 
-    for b, batch in enumerate(chord_batches):
-        for p, pitch_vector in enumerate(batch):
+    for batch in recordings:
+        for recording in batch:
+            pitch_vector = recording['pitch_vector']
             events = muser.iodata.to_midi_note_events(pitch_vector)
             note_toggle = True
             send_events(events[0])
@@ -86,8 +89,7 @@ try:
                 pass
             note_toggle = False
             send_events(events[1])
-            recordings[b][p]['pitch_vector'] = pitch_vector
-            recordings[b][p]['buffers'] = buffers
+            recording['buffers'] = buffers
             buffers = np.ndarray([channels, 0, buffer_size])
 
 except (KeyboardInterrupt, SystemExit):
@@ -104,8 +106,8 @@ except (KeyboardInterrupt, SystemExit):
 recordings.dump('recordings.pickle')
 
 for b, batch in enumerate(recordings):
-    for p, pitch in enumerate(batch):
-        snd = muser.iodata.buffers_to_snd(pitch['buffers'])
+    for p, recording in enumerate(batch):
+        snd = muser.iodata.buffers_to_snd(recording['buffers'])
         wavfile_name = 'b{}p{}.wav'.format(b, p)
         scipy.io.wavfile.write(wavfile_name, sample_rate, snd)
 
