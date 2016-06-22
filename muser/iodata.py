@@ -42,7 +42,7 @@ class JackAudioCapturer(jack.Client):
             self.captured = np.append(self.captured, self._buffer_array, axis=1)
 
     def empty_captured(self):
-        """ Initialize arrays for capture of inport buffers. """
+        """ Initialize the array for storage of captured buffers. """
         self.captured = np.ndarray([len(self.inports), 0, self.blocksize])
 
     def drop_captured(self):
@@ -52,12 +52,17 @@ class JackAudioCapturer(jack.Client):
         return captured
 
     def n_kept(self):
-        n_buffers = self.captured.shape[1]
-        return n_buffers
+        """ Returns the number of buffer array groups stored in `self.captured`.
+
+        Depends on capture time but not the number of inports.
+        """
+        n_buffer_arrays = self.captured.shape[1]
+        return n_buffer_arrays
 
     def last_kept(self):
-        last_buffer = self.captured[:, -1]
-        return last_buffer
+        """ Returns the last group of buffer arrays captured. """
+        last_buffer_arrays = self.captured[:, -1]
+        return last_buffer_arrays
 
 
 def init_jack_client(name="MuserJACKClient", inports=0, outports=0):
