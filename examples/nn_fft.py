@@ -30,8 +30,7 @@ channels = len(synth_outports)
 
 # `jack` initialization
 audio_client = muser.iodata.init_jack_client(inports=channels)
-buffer_size = audio_client.blocksize
-sample_rate = audio_client.samplerate
+capturer = muser.iodata.JackAudioCapturer(audio_client)
 
 # `rtmidi` initialization
 rtmidi_out = muser.iodata.init_rtmidi_out()
@@ -55,52 +54,33 @@ recordings['pitch_vector'] = muser.utils.get_batches(random_pitch_vector,
                                                       batches, batch_size,
                                                       [chord_size])
 
-class JackClientHub(object):
-    """ Handles data transfer through a `jack` client. """
-    def __init__(self, jack_client):
-        self.client = jack_client
-        self.buffer_size = self.client.blocksize
-        self.process_toggle = False
-        self.inports = self.client.inports
-        self.buffers_in = np.ndarray([len(self.inports), 0, self.buffer_size])
-        self._buffer_in = np.ones([len(self.inports), 1, self.buffer_size],
-                                  dtype=np.float64)
-        self.bind_process()
-
-    def bind_process(self):
-        @self.client.set_process_callback
-        def process(frames):
-            if self.process_toggle:
-                for ch, inport in enumerate(self.inports):
-                    self._buffer_in[ch] = inport.get_array()
-                self.buffers_in = np.append(self.buffers_in, self._buffer_in, axis=1)
-
-    def clear_buffers_in(self):
-        buffers_in = np.ndarray([len(self.inports), 0, self.client.blocksize])
-
-client_hub = JackClientHub(audio_client)
-client_hub.client.activate()
+# define Capturer
+def record(frames):
+    if capturer.process_toggle:
+        capturer.capture()
+capturer.bind_process(record)
+audio_client.activate()
 try:
     # connect synthesizer stereo audio outputs to `jack` client inputs
-    for port_pair in zip(synth_outports, client_hub.inports):
-        client_hub.client.connect(*port_pair)
+    for port_pair in zip(synth_outports, capturer.inports):
+        capturer.client.connect(*port_pair)
 
     for batch in recordings:
         for recording in batch:
             pitch_vector = recording['pitch_vector']
             events = muser.iodata.to_midi_note_events(pitch_vector)
-            client_hub.process_toggle = True
+            capturer.process_toggle = True
             send_events(events[0])
-            while not client_hub.buffers_in.shape[1]:
+            while not capturer.n_kept():
                 pass
-            while np.any(client_hub.buffers_in[0][-1]):
+            while np.any(capturer.last_kept()[0]) or capturer.n_kept() < 100:
                 # `jack` listening through `process()`
                 # wait for silence, except during first few buffers
                 pass
-            client_hub.process_toggle = False
+            capturer.process_toggle = False
             send_events(events[1])
-            recording['buffer'] = client_hub.buffers_in
-            client_hub.clear_buffers_in()
+            recording['buffer'] = capturer.buffers_in
+            capturer.clear_buffers_in()
 
 except (KeyboardInterrupt, SystemExit):
     note_toggle = False
@@ -109,7 +89,7 @@ except (KeyboardInterrupt, SystemExit):
     muser.iodata.midi_all_notes_off(rtmidi_out, midi_basic=True)
     # close `rtmidi` and `jack` clients
     del rtmidi_out
-    muser.iodata.del_jack_client(client_hub.client)
+    muser.iodata.del_jack_client(capturer.client)
     raise
 
 # store audio results
@@ -119,14 +99,14 @@ for b, batch in enumerate(recordings):
     for p, recording in enumerate(batch):
         snd = muser.iodata.buffers_to_snd(recording['buffer'])
         wavfile_name = 'b{}p{}.wav'.format(b, p)
-        scipy.io.wavfile.write(wavfile_name, sample_rate, snd)
+        scipy.io.wavfile.write(wavfile_name, capturer.samplerate, snd)
 
-muser.iodata.del_jack_client(client_hub.client)
+muser.iodata.del_jack_client(capturer.client)
 
 quit()
 
 # Neural network parameters
-inputs = buffer_size
+inputs = recordings.shape[2]
 hidden1_n = 300
 outputs = 88
 

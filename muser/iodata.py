@@ -22,6 +22,39 @@ ALL_NOTES_OFF = 0x7B
 """ MIDI parameters. """
 
 
+class JackAudioCapturer(object):
+    """ Handles data transfer through a `jack` client. """
+    def __init__(self, jack_client):
+        self.client = jack_client
+        self.samplerate = self.client.samplerate
+        self.blocksize = self.client.blocksize
+        self.inports = self.client.inports
+        self.process_toggle = False
+        self.clear_buffers_in(init=True)
+
+    def bind_process(self, process):
+        self.client.set_process_callback(process)
+
+    def capture(self):
+        for p, inport in enumerate(self.inports):
+            self._buffer_in[p] = inport.get_array()
+        self.buffers_in = np.append(self.buffers_in, self._buffer_in, axis=1)
+
+    def n_kept(self):
+        n_buffers = self.buffers_in.shape[1]
+        return n_buffers
+
+    def last_kept(self):
+        last_buffer = self.buffers_in[:, -1]
+        return last_buffer
+
+    def clear_buffers_in(self, init=False):
+        self.buffers_in = np.ndarray([len(self.inports), 0, self.blocksize])
+        if init:
+            self._buffer_in = np.ones([len(self.inports), 1, self.blocksize],
+                                      dtype=np.float64)
+
+
 def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
     """ Return `rtmidi` output client with opened port.
 
