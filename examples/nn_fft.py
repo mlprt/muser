@@ -56,13 +56,7 @@ recordings['pitch_vector'] = muser.utils.get_batches(random_pitch_vector,
                                                       [chord_size])
 
 class JackClientHub(object):
-    """ Handles data transfer through a `jack` client.
-
-    If `process()` is decorated with `jack.Client.set_process_callback`
-    procedurally, when active it raises exceptions on trying to modify certain
-    variables above its scope (due to concurrency?). This class provides an
-    explicit (instance) scope for `process()` to refer to.
-    """
+    """ Handles data transfer through a `jack` client. """
     def __init__(self, jack_client):
         self.client = jack_client
         self.buffer_size = self.client.blocksize
