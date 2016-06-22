@@ -46,9 +46,8 @@ learning_rate = 0.001
 # storage of results
 # TODO: velocity vectors
 rec_dtype = np.dtype([('pitch_vector', np.uint8, N_MIDI_PITCHES),
-                      ('buffers', object)])
+                      ('buffer', object)])
 recordings = np.ndarray([batches, batch_size], dtype=rec_dtype)
-buffers = np.ndarray([channels, 0, buffer_size])
 
 # generate note batches
 random_pitch_vector = muser.sequencer.random_pitch_vector
@@ -56,41 +55,58 @@ recordings['pitch_vector'] = muser.utils.get_batches(random_pitch_vector,
                                                       batches, batch_size,
                                                       [chord_size])
 
-# temporary and control variables used by the `jack` monitor
-buffer_ = np.ndarray([channels, 1, buffer_size])
-note_toggle = False
+class JackClientHub(object):
+    """ Handles data transfer through a `jack` client.
 
-# `jack` monitor
-@audio_client.set_process_callback
-def process(frames):
-    global buffers
-    global buffer_
-    global note_toggle
-    if note_toggle:
-        for ch in range(channels):
-            buffer_[ch] = audio_client.inports[ch].get_array()
-        buffers = np.append(buffers, buffer_, axis=1)
+    If `process()` is decorated with `jack.Client.set_process_callback`
+    procedurally, when active it raises exceptions on trying to modify certain
+    variables above its scope (due to concurrency?). This class provides an
+    explicit (instance) scope for `process()` to refer to.
+    """
+    def __init__(self, jack_client):
+        self.client = jack_client
+        self.buffer_size = self.client.blocksize
+        self.process_toggle = False
+        self.inports = self.client.inports
+        self.buffers_in = np.ndarray([len(self.inports), 0, self.buffer_size])
+        self._buffer_in = np.ones([len(self.inports), 1, self.buffer_size],
+                                  dtype=np.float64)
+        self.bind_process()
 
-audio_client.activate()
+    def bind_process(self):
+        @self.client.set_process_callback
+        def process(frames):
+            if self.process_toggle:
+                for ch, inport in enumerate(self.inports):
+                    self._buffer_in[ch] = inport.get_array()
+                self.buffers_in = np.append(self.buffers_in, self._buffer_in, axis=1)
+
+    def clear_buffers_in(self):
+        buffers_in = np.ndarray([len(self.inports), 0, self.client.blocksize])
+
+client_hub = JackClientHub(audio_client)
+client_hub.client.activate()
 try:
     # connect synthesizer stereo audio outputs to `jack` client inputs
-    for port_pair in zip(synth_outports, audio_client.inports):
-        audio_client.connect(*port_pair)
+    for port_pair in zip(synth_outports, client_hub.inports):
+        client_hub.client.connect(*port_pair)
 
     for batch in recordings:
         for recording in batch:
             pitch_vector = recording['pitch_vector']
             events = muser.iodata.to_midi_note_events(pitch_vector)
-            note_toggle = True
+            client_hub.process_toggle = True
             send_events(events[0])
-            while np.any(buffer_[0]) or buffers.shape[1] < 10:
+            while not client_hub.buffers_in.shape[1]:
+                pass
+            while np.any(client_hub.buffers_in[0][-1]):
                 # `jack` listening through `process()`
                 # wait for silence, except during first few buffers
                 pass
-            note_toggle = False
+            client_hub.process_toggle = False
             send_events(events[1])
-            recording['buffers'] = buffers
-            buffers = np.ndarray([channels, 0, buffer_size])
+            recording['buffer'] = client_hub.buffers_in
+            client_hub.clear_buffers_in()
 
 except (KeyboardInterrupt, SystemExit):
     note_toggle = False
@@ -99,7 +115,7 @@ except (KeyboardInterrupt, SystemExit):
     muser.iodata.midi_all_notes_off(rtmidi_out, midi_basic=True)
     # close `rtmidi` and `jack` clients
     del rtmidi_out
-    muser.iodata.del_jack_client(audio_client)
+    muser.iodata.del_jack_client(client_hub.client)
     raise
 
 # store audio results
@@ -107,10 +123,11 @@ recordings.dump('recordings.pickle')
 
 for b, batch in enumerate(recordings):
     for p, recording in enumerate(batch):
-        snd = muser.iodata.buffers_to_snd(recording['buffers'])
+        snd = muser.iodata.buffers_to_snd(recording['buffer'])
         wavfile_name = 'b{}p{}.wav'.format(b, p)
         scipy.io.wavfile.write(wavfile_name, sample_rate, snd)
 
+muser.iodata.del_jack_client(client_hub.client)
 
 quit()
 
