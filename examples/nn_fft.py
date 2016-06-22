@@ -28,9 +28,8 @@ synth_midi_in = "Pianoteq55:midi_in"
 
 channels = len(synth_outports)
 
-# `jack` initialization
-audio_client = muser.iodata.init_jack_client(inports=channels)
-capturer = muser.iodata.JackAudioCapturer(audio_client)
+# `jack` capture client initialization
+capturer = muser.iodata.JackAudioCapturer(inports=channels)
 
 # `rtmidi` initialization
 rtmidi_out = muser.iodata.init_rtmidi_out()
@@ -54,22 +53,17 @@ recordings['pitch_vector'] = muser.utils.get_batches(random_pitch_vector,
                                                       batches, batch_size,
                                                       [chord_size])
 
-# define Capturer
-def record(frames):
-    if capturer.process_toggle:
-        capturer.capture()
-capturer.bind_process(record)
-audio_client.activate()
+capturer.activate()
 try:
     # connect synthesizer stereo audio outputs to `jack` client inputs
     for port_pair in zip(synth_outports, capturer.inports):
-        capturer.client.connect(*port_pair)
+        capturer.connect(*port_pair)
 
     for batch in recordings:
         for recording in batch:
             pitch_vector = recording['pitch_vector']
             events = muser.iodata.to_midi_note_events(pitch_vector)
-            capturer.process_toggle = True
+            capturer.capture_toggle = True
             send_events(events[0])
             while not capturer.n_kept():
                 pass
@@ -77,19 +71,18 @@ try:
                 # `jack` listening through `process()`
                 # wait for silence, except during first few buffers
                 pass
-            capturer.process_toggle = False
+            capturer.capture_toggle = False
             send_events(events[1])
-            recording['buffer'] = capturer.buffers_in
-            capturer.clear_buffers_in()
+            recording['buffer'] = capturer.drop_captured()
 
 except (KeyboardInterrupt, SystemExit):
-    note_toggle = False
+    capturer.capture_toggle = False
     print('\nUser or system interrupt, dismantling JACK clients!')
     # synthesizer
     muser.iodata.midi_all_notes_off(rtmidi_out, midi_basic=True)
     # close `rtmidi` and `jack` clients
     del rtmidi_out
-    muser.iodata.del_jack_client(capturer.client)
+    muser.iodata.disable_jack_client(capturer)
     raise
 
 # store audio results
@@ -101,7 +94,7 @@ for b, batch in enumerate(recordings):
         wavfile_name = 'b{}p{}.wav'.format(b, p)
         scipy.io.wavfile.write(wavfile_name, capturer.samplerate, snd)
 
-muser.iodata.del_jack_client(capturer.client)
+muser.iodata.disable_jack_client(capturer)
 
 quit()
 

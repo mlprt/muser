@@ -22,37 +22,53 @@ ALL_NOTES_OFF = 0x7B
 """ MIDI parameters. """
 
 
-class JackAudioCapturer(object):
-    """ Handles data transfer through a `jack` client. """
-    def __init__(self, jack_client):
-        self.client = jack_client
-        self.samplerate = self.client.samplerate
-        self.blocksize = self.client.blocksize
-        self.inports = self.client.inports
-        self.process_toggle = False
-        self.clear_buffers_in(init=True)
+class JackAudioCapturer(jack.Client):
+    """ JACK client with support for audio inport capture. """
+    def __init__(self, name='CapturerClient', inports=1):
+        super().__init__(name=name)
+        for i in range(inports):
+            self.inports.register("in_{}".format(i))
+        self.capture_toggle = False
+        self.empty_captured()
+        self._buffer_array = np.zeros([len(self.inports), 1, self.blocksize],
+                                      dtype=np.float64)
+        self.set_process_callback(self._capture)
 
-    def bind_process(self, process):
-        self.client.set_process_callback(process)
+    def _capture(self, frames):
+        """ The capture process. Runs continuously with activated client. """
+        if self.capture_toggle:
+            for p, inport in enumerate(self.inports):
+                self._buffer_array[p] = inport.get_array()
+            self.captured = np.append(self.captured, self._buffer_array, axis=1)
 
-    def capture(self):
-        for p, inport in enumerate(self.inports):
-            self._buffer_in[p] = inport.get_array()
-        self.buffers_in = np.append(self.buffers_in, self._buffer_in, axis=1)
+    def empty_captured(self):
+        """ Initialize arrays for capture of inport buffers. """
+        self.captured = np.ndarray([len(self.inports), 0, self.blocksize])
+
+    def drop_captured(self):
+        """ Return and re-initialize the array of captured buffers. """
+        captured = np.copy(self.captured)
+        self.empty_captured()
+        return captured
 
     def n_kept(self):
-        n_buffers = self.buffers_in.shape[1]
+        n_buffers = self.captured.shape[1]
         return n_buffers
 
     def last_kept(self):
-        last_buffer = self.buffers_in[:, -1]
+        last_buffer = self.captured[:, -1]
         return last_buffer
 
-    def clear_buffers_in(self, init=False):
-        self.buffers_in = np.ndarray([len(self.inports), 0, self.blocksize])
-        if init:
-            self._buffer_in = np.ones([len(self.inports), 1, self.blocksize],
-                                      dtype=np.float64)
+
+def init_jack_client(name="MuserJACKClient", inports=0, outports=0):
+    """ Return an inactive `jack` client with registered audio ports. """
+    jack_client = jack.Client(name)
+    for i in range(inports):
+        jack_client.inports.register("in_{}".format(i))
+    for o in range(outports):
+        jack_client.outports.register("out_{}".format(o))
+
+    return jack_client
 
 
 def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
@@ -74,18 +90,7 @@ def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
     return midi_out
 
 
-def init_jack_client(name="MuserJACKClient", inports=0, outports=0):
-    """ Return an inactive `jack` client with registered audio ports. """
-    jack_client = jack.Client(name)
-    for i in range(inports):
-        jack_client.inports.register("in_{}".format(i))
-    for o in range(outports):
-        jack_client.outports.register("out_{}".format(o))
-
-    return jack_client
-
-
-def del_jack_client(jack_client):
+def disable_jack_client(jack_client):
     """ Unregister all ports, deactivate, and close a `jack` client. """
     jack_client.outports.clear()
     jack_client.inports.clear()
