@@ -81,6 +81,26 @@ class JackAudioCapturer(jack.Client):
                 self._buffer_array[p] = inport.get_array()
             self.captured = np.append(self.captured, self._buffer_array, axis=1)
 
+    def capture_events(self, events, send_events, blocks=0):
+        """ Send a group of MIDI events and capture the result.
+
+        Args:
+            events (np.ndarray):
+            send_events (function):
+        """
+        self.capture_toggle = True
+        send_events(events[0])
+        while not self.n or not np.any(self.last):
+            pass
+        if blocks:
+            while self.n < blocks:
+                pass
+        else:
+            while np.any(self.last):
+                pass
+        self.capture_toggle = False
+        send_events(events[1])
+
     @property
     def _empty_captured(self):
         """np.ndarray: An (empty) array for storage of captured buffers. """
@@ -135,7 +155,6 @@ def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
         midi_out.open_port(outport)
     else:
         midi_out.open_virtual_port("out_{}".format(outport))
-
     return midi_out
 
 
@@ -151,6 +170,13 @@ def send_events(rtmidi_out, events):
     """
     for event in events:
         rtmidi_out.send_message(event)
+
+
+def get_client_send_events(rtmidi_out):
+    """ Returns an ``rtmidi`` client-specific ``send_events``. """
+    def client_send_events(events):
+        return send_events(rtmidi_out, events)
+    return client_send_events
 
 
 def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
@@ -210,7 +236,6 @@ def to_sample_index(time, sample_rate):
         sample_index (int): Index of the sample taken nearest to ``time``.
     """
     sample_index = int(time * sample_rate)
-
     return sample_index
 
 
@@ -232,7 +257,6 @@ def unit_snd(snd, factor=None):
     if factor is None:
         factor = 2. ** (SND_DTYPES[snd.dtype.name] - 1)
     scaled = snd / factor
-
     return scaled
 
 
@@ -248,7 +272,6 @@ def wav_read_unit(wavfile_name):
     """
     sample_rate, snd = wavfile.read(wavfile_name)
     snd = unit_snd(snd)
-
     return sample_rate, snd
 
 
@@ -273,9 +296,12 @@ def buffers_to_snd(buffers, stereo=True, dtype='int32'):
     snd = buffers_.reshape((2, buffers_.size // 2)).T
     snd = snd * 2.**(SND_DTYPES[dtype] - 1)
     snd = snd.astype(dtype)
-
     return snd
 
+
+def unpack_midi_event(event):
+    """  """
+    pass
 
 def report_midi_event(event, last_frame_time=0, out=sys.stdout):
     """ Print details of a JACK MIDI event.

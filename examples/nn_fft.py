@@ -33,7 +33,7 @@ capturer = muser.iodata.JackAudioCapturer(inports=channels)
 
 # `rtmidi` initialization
 rtmidi_out = muser.iodata.init_rtmidi_out()
-send_events = muser.iodata.send_events
+rtmidi_send_events = muser.iodata.get_client_send_events(rtmidi_out)
 
 # Training parameters
 chord_size = 1
@@ -63,16 +63,7 @@ try:
         for recording in batch:
             pitch_vector = recording['pitch_vector']
             events = muser.iodata.to_midi_note_events(pitch_vector)
-            capturer.capture_toggle = True
-            send_events(rtmidi_out, events[0])
-            while not capturer.n or not np.any(capturer.last):
-                # wait for capture to start and initial silence to end
-                pass
-            while np.any(capturer.last):
-                # wait for silence to end capture
-                pass
-            capturer.capture_toggle = False
-            send_events(rtmidi_out, events[1])
+            capturer.capture_events(events, rtmidi_send_events)
             recording['buffer'] = capturer.drop_captured()
 
 except (KeyboardInterrupt, SystemExit):
