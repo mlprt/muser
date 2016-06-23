@@ -65,9 +65,9 @@ try:
             events = muser.iodata.to_midi_note_events(pitch_vector)
             capturer.capture_toggle = True
             send_events(rtmidi_out, events[0])
-            while not capturer.n_kept():
+            while not capturer.n:
                 pass
-            while np.any(capturer.last_kept()[0]) or capturer.n_kept() < 100:
+            while np.any(capturer.last[0]) or capturer.n < 100:
                 # `jack` listening through `process()`
                 # wait for silence, except during first few buffers
                 pass

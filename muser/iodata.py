@@ -82,22 +82,22 @@ class JackAudioCapturer(jack.Client):
         self.empty_captured()
         return captured
 
-    def n_kept(self):
-        """ Returns the number of buffer array groups stored in `self.captured`.
+    @property
+    def n(self):
+        """int: The number of buffer array groups stored in ``self.captured``.
 
         Depends on capture time but not the number of inports.
         """
-        n_buffer_arrays = self.captured.shape[1]
-        return n_buffer_arrays
+        return self.captured.shape[1]
 
-    def last_kept(self):
-        """ Returns the last group of buffer arrays captured. """
-        last_buffer_arrays = self.captured[:, -1]
-        return last_buffer_arrays
+    @property
+    def last(self):
+        """np.ndarray: The last group of buffer arrays captured. """
+        return self.captured[:, -1]
 
 
 def disable_jack_client(jack_client):
-    """ Unregister all ports, deactivate, and close a `jack.Client`. """
+    """Unregister all ports, deactivate, and close a JACK client."""
     jack_client.outports.clear()
     jack_client.inports.clear()
     jack_client.midi_outports.clear()
@@ -107,7 +107,7 @@ def disable_jack_client(jack_client):
 
 
 def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
-    """ Return `rtmidi` output client with opened port.
+    """Return an ``rtmidi`` output client with opened port.
 
     Args:
         name (str): The name of the ``rtmidi`` client.
@@ -126,7 +126,7 @@ def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
 
 
 def send_events(rtmidi_out, events):
-    """ Send a series of MIDI events out through ``rtmidi``.
+    """Send a series of MIDI events out through ``rtmidi``.
 
     Events are sent without pause, so intended for sending series of events
     that should be heard simultaneously (chords).
@@ -140,14 +140,14 @@ def send_events(rtmidi_out, events):
 
 
 def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
-    """ Send MIDI event(s) to release (turn off) all notes.
+    """Send MIDI event(s) to release (turn off) all notes.
 
     Args:
         midi_out (rtmidi.MidiOut): An `rtmidi` MIDI output client
         midi_basic (bool): Switches MIDI event type to turn notes off.
             Use NOTE_OFF events for each note if True, and single
             ALL_NOTES_OFF event if False.
-        midi_range (Tuple[]): Range of pitches for NOTE_OFF events if midi_basic
+        midi_range (Tuple[int]): Range of pitches for NOTE_OFF events, if used.
             Defaults to entire MIDI pitch range.
     """
     if midi_basic:
@@ -193,7 +193,7 @@ def to_sample_index(time, sample_rate):
         sample_rate (int): Rate of sampling for the recording.
 
     Returns:
-        sample_index (int): Index of the sample taken nearest to `time`.
+        sample_index (int): Index of the sample taken nearest to ``time``.
     """
     sample_index = int(time * sample_rate)
 
@@ -201,16 +201,19 @@ def to_sample_index(time, sample_rate):
 
 
 def unit_snd(snd, factor=None):
-    """ Scale elements of an array of wav data from -1 to 1.
+    """ Scale elements of an array of (.wav) data from -1 to 1.
 
-    Default factor is determined from `snd.dtype`, corresponding to the format imported by `scipy.io.wavfile`. Can scale other types of data if factor is appropriately specified and data object can be scaled element-wise with the division operator, as for `np.ndarray`.
+    Default factor is determined from ``snd.dtype``, corresponding to the
+    format imported by ``scipy.io.wavfile``. Can scale other types of data if
+    ``factor`` is appropriately specified and ``snd`` can be scaled
+    element-wise with the division operator, as for ``np.ndarray``.
 
     Args:
-        snd (np.ndarray): Data (audio from `.wav`) to be scaled.
-        factor (int): Divide elements of snd by this number.
+        snd (np.ndarray): Data (audio from .wav) to be scaled.
+        factor (int): Divide elements of ``snd`` by this number.
 
     Returns:
-        scaled (np.ndarray): Same shape as `snd`, with elements scaled by factor.
+        scaled (np.ndarray): Same shape as ``snd``, with elements scaled.
     """
     if factor is None:
         factor = 2. ** (SND_DTYPES[snd.dtype.name] - 1)
@@ -220,14 +223,14 @@ def unit_snd(snd, factor=None):
 
 
 def wav_read_unit(wavfile_name):
-    """ Return contents of `.wav` scaled from -1 to 1.
+    """ Return contents of .wav as array scaled from -1 to 1.
 
     Args:
-        wavfile_name (str): Name of the `.wav` file to read.
+        wavfile_name (str): Name of the .wav file to read.
 
     Returns:
         sample_rate (int): The file's audio sampling rate.
-        snd (np.ndarray): The file's audio samples as `float`.
+        snd (np.ndarray): The file's audio samples as ``float``.
     """
     sample_rate, snd = wavfile.read(wavfile_name)
     snd = unit_snd(snd)
@@ -261,10 +264,11 @@ def buffers_to_snd(buffers, stereo=True, dtype='int32'):
 
 
 def report_midi_event(event, last_frame_time=0, out=sys.stdout):
-    """ Print details of a `jack` MIDI event.
+    """ Print details of a JACK MIDI event.
 
-    NOTE: Does not apply to tuples specifying events, as with `rtmidi`.
-    Retaining this material with intent for further `jack` integration.
+    Note:
+        Does not apply to tuples specifying events, as with ``rtmidi``.
+        Retaining this material with intent for further ``jack`` integration.
 
     Args:
         event ():
