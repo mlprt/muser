@@ -50,12 +50,12 @@ def init_jack_client(name="MuserClient", inports=0, outports=0,
     jack_client = jack.Client(name)
     _register_ports(jack_client, inports=inports, outports=outports,
                    midi_inports=midi_inports, midi_outports=midi_outports)
-
     return jack_client
 
 
 class JackAudioCapturer(jack.Client):
     """ JACK client with process capturing audio inports when toggled. """
+
     def __init__(self, name='CapturerClient', inports=1):
         super().__init__(name=name)
         _register_ports(self, inports=inports)
@@ -110,11 +110,11 @@ def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
     """ Return `rtmidi` output client with opened port.
 
     Args:
-        name (str): The name of the `rtmidi` client.
+        name (str): The name of the ``rtmidi`` client.
         outport (int): Virtual output port number to initialize.
 
     Returns:
-        midi_out (rtmidi.MidiOut): `rtmidi` output client.
+        midi_out (rtmidi.MidiOut): ``rtmidi`` output client.
     """
     midi_out = rtmidi.MidiOut(name=name)
     if midi_out.get_ports():
@@ -125,29 +125,18 @@ def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
     return midi_out
 
 
-def get_send_events(rtmidi_out):
-    """ Returns a function that sends MIDI events through `rtmidi`.
+def send_events(rtmidi_out, events):
+    """ Send a series of MIDI events out through ``rtmidi``.
+
+    Events are sent without pause, so intended for sending series of events
+    that should be heard simultaneously (chords).
 
     Args:
         rtmidi_out (rtmidi.MidiOut): The `rtmidi` output client.
-
-    Returns:
-        send_events (function): Client-specific MIDI event sender.
+        events (List[tuple]): MIDI event data.
     """
-
-    def send_events(events):
-        """ Send a series of MIDI events out through rtmidi.
-
-        Events sent without pause, so intended for sending series of events
-        that should be heard simultaneously (chords).
-
-        Args:
-            events (list): Tuples specifying MIDI events.
-        """
-        for event in events:
-            rtmidi_out.send_message(event)
-
-    return send_events
+    for event in events:
+        rtmidi_out.send_message(event)
 
 
 def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
@@ -158,7 +147,7 @@ def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
         midi_basic (bool): Switches MIDI event type to turn notes off.
             Use NOTE_OFF events for each note if True, and single
             ALL_NOTES_OFF event if False.
-        midi_range (tuple): Range of pitches for NOTE_OFF events if midi_basic
+        midi_range (Tuple[]): Range of pitches for NOTE_OFF events if midi_basic
             Defaults to entire MIDI pitch range.
     """
     if midi_basic:
