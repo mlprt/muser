@@ -73,7 +73,7 @@ except (KeyboardInterrupt, SystemExit):
     capturer.capture_toggle = False
     print('\nUser or system interrupt, dismantling JACK clients!')
     # synthesizer
-    muser.iodata.midi_all_notes_off(rtmidi_out, midi_basic=True)
+    rtmidi_send_events(muser.iodata.midi_all_notes_off(midi_basic=True))
     # close `rtmidi` and `jack` clients
     del rtmidi_out
     muser.iodata.disable_jack_client(capturer)

@@ -16,6 +16,7 @@ from scipy.io import wavfile
 SND_DTYPES = {'int16': 16, 'int32': 32}
 """ Data types that SciPy can import from `.wav`"""
 
+N_PITCHES = 127
 NOTE_ON = 0x90
 NOTE_OFF = 0x80
 ALL_NOTES_OFF = 0x7B
@@ -181,7 +182,7 @@ def get_client_send_events(rtmidi_out):
     return client_send_events
 
 
-def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
+def midi_all_notes_off(midi_basic=False, pitch_range=(0, 128)):
     """Send MIDI event(s) to release (turn off) all notes.
 
     Args:
@@ -193,10 +194,12 @@ def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
             Defaults to entire MIDI pitch range.
     """
     if midi_basic:
-        for midi_pitch in range(*midi_range):
-            rtmidi_out.send_message((NOTE_OFF, midi_pitch, 0))
+        pitches_off = np.zeros(N_PITCHES)
+        pitches_off[slice(*pitch_range)] = 1
+        return vector_to_midi_events(NOTE_OFF, pitches_off)
+
     else:
-        rtmidi_out.send_message((ALL_NOTES_OFF, 0, 0))
+        return np.array(((ALL_NOTES_OFF, 0, 0),))
 
 
 def vector_to_midi_events(status, pitch_vector, velocity=0):
@@ -215,7 +218,7 @@ def vector_to_midi_events(status, pitch_vector, velocity=0):
 
     try:
         status = STATUS_ALIASES[status.upper()]
-    except KeyError:
+    except (KeyError, AttributeError):
         pass
     pitches = np.flatnonzero(pitch_vector)
     chord_events = np.zeros((3, len(pitches)), dtype=np.uint8)
