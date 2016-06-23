@@ -25,10 +25,16 @@ JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
                    'midi_inports':'midi_in_{}', 'midi_outports':'midi_out_{}'}
 """ Types of `jack` ports and their default naming. """
 
-def port_registrar(jack_client, **port_args):
-    """ Register a `jack.Client`'s ports of the given type and number.
+
+def _register_ports(jack_client, **port_args):
+    """ Register a JACK client's ports of the given type and number.
+
+    Note:
+        It is the caller's responsibility to properly specify `**port_args`,
+        and to document them!
 
     Args:
+        jack_client (`jack.Client`): The client to register the ports.
         **port_args: Keywords give port type, args give quantity to register.
             `port_args.keys()` must be a subset of `JACK_PORT_NAMES.keys()`
     """
@@ -42,7 +48,7 @@ def init_jack_client(name="MuserClient", inports=0, outports=0,
                      midi_inports=0, midi_outports=0):
     """ Return an inactive `jack` client with registered ports. """
     jack_client = jack.Client(name)
-    port_registrar(jack_client, inports=inports, outports=outports,
+    _register_ports(jack_client, inports=inports, outports=outports,
                    midi_inports=midi_inports, midi_outports=midi_outports)
 
     return jack_client
@@ -52,7 +58,7 @@ class JackAudioCapturer(jack.Client):
     """ JACK client with process capturing audio inports when toggled. """
     def __init__(self, name='CapturerClient', inports=1):
         super().__init__(name=name)
-        port_registrar(self, inports=inports)
+        _register_ports(self, inports=inports)
         self.capture_toggle = False
         self.empty_captured()
         self._buffer_array = np.zeros([len(self.inports), 1, self.blocksize],
