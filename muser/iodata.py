@@ -54,15 +54,24 @@ def init_jack_client(name="MuserClient", inports=0, outports=0,
 
 
 class JackAudioCapturer(jack.Client):
-    """ JACK client with process capturing audio inports when toggled. """
+    """ JACK client with process capturing audio inports when toggled.
+
+    Attributes:
+        capture_toggle (bool): While ``True``, instance captures buffers.
+        captured (np.ndarray): Buffers captured since instantiation or drop.
+
+    Args:
+        name (str): Client name.
+        inports (int): Number of inports to register and capture from.
+    """
 
     def __init__(self, name='CapturerClient', inports=1):
         super().__init__(name=name)
         _register_ports(self, inports=inports)
-        self.capture_toggle = False
-        self.empty_captured()
         self._buffer_array = np.zeros([len(self.inports), 1, self.blocksize],
                                       dtype=np.float64)
+        self.capture_toggle = False
+        self.captured = self._empty_captured
         self.set_process_callback(self._capture)
 
     def _capture(self, frames):
@@ -72,14 +81,19 @@ class JackAudioCapturer(jack.Client):
                 self._buffer_array[p] = inport.get_array()
             self.captured = np.append(self.captured, self._buffer_array, axis=1)
 
-    def empty_captured(self):
-        """ Initialize the array for storage of captured buffers. """
-        self.captured = np.ndarray([len(self.inports), 0, self.blocksize])
+    @property
+    def _empty_captured(self):
+        """np.ndarray: An (empty) array for storage of captured buffers. """
+        return np.ndarray([len(self.inports), 0, self.blocksize])
 
     def drop_captured(self):
-        """ Return and re-initialize the array of captured buffers. """
+        """ Return and empty the array of captured buffers.
+
+        Returns:
+            captured (np.ndarray): Previously captured and stored buffer arrays.
+        """
         captured = np.copy(self.captured)
-        self.empty_captured()
+        self.captured = self._empty_captured
         return captured
 
     @property
