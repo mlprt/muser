@@ -19,6 +19,8 @@ SND_DTYPES = {'int16': 16, 'int32': 32}
 NOTE_ON = 0x90
 NOTE_OFF = 0x80
 ALL_NOTES_OFF = 0x7B
+STATUS_ALIASES = {'NOTE_ON': NOTE_ON, 'ON': NOTE_ON,
+                  'NOTE_OFF': NOTE_OFF, 'OFF': NOTE_OFF}
 """ MIDI parameters. """
 
 JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
@@ -197,32 +199,31 @@ def midi_all_notes_off(rtmidi_out, midi_basic=False, midi_range=(0, 128)):
         rtmidi_out.send_message((ALL_NOTES_OFF, 0, 0))
 
 
-def to_midi_note_events(pitch_vector, velocity_vector=None, velocity=100):
-    """ Return tuples specifying on/off MIDI note events based on vectors.
+def vector_to_midi_events(status, pitch_vector, velocity=0):
+    """ Return MIDI event parameters for given pitch vector.
 
-    TODO: General function for events,
-          e.g. note_on_events = to_midi_events(NOTE_ON, vector1, vector2)
+    Status can be specified as one of the keys in ``STATUS_ALIASES``.
 
     Args:
-        pitch_vector (np.ndarray): The vector of MIDI pitches
-        velocity_vector (np.ndarray): The vector of MIDI velocities
-        velocity (int): Constant velocity in place of `velocity_vector`
+        status: The status parameter of the returned events.
+        pitch_vector (np.ndarray): The hot vector of MIDI pitches in a chord.
+        velocity (int): The MIDI velocity of the chord.
 
     Returns:
-        note_on_events (np.ndarray): MIDI NOTE_ON event parameters
-        note_off_events (np.ndarray): MIDI NOTE_OFF event parameters
+        chord_events (np.ndarray): MIDI event parameters, one event per row.
     """
-    midi_pitches = np.flatnonzero(pitch_vector)
-    n = len(midi_pitches)
-    if velocity_vector is None:
-        velocity_vector = np.full(n, velocity, dtype=np.uint8)
-    note_on_events = np.full((3, n), NOTE_ON, dtype=np.uint8)
-    note_on_events[1] = midi_pitches
-    note_on_events[2] = velocity_vector
-    note_off_events = np.copy(note_on_events)
-    note_off_events[0] = np.full(n, NOTE_OFF, dtype=np.uint8)
 
-    return note_on_events.T, note_off_events.T
+    try:
+        status = STATUS_ALIASES[status.upper()]
+    except KeyError:
+        pass
+    pitches = np.flatnonzero(pitch_vector)
+    chord_events = np.zeros((3, len(pitches)), dtype=np.uint8)
+    chord_events[0] = status
+    chord_events[1] = pitches
+    chord_events[2] = velocity
+    chord_events = chord_events.transpose()
+    return chord_events
 
 
 def to_sample_index(time, sample_rate):

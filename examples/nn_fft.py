@@ -62,7 +62,10 @@ try:
     for batch in recordings:
         for recording in batch:
             pitch_vector = recording['pitch_vector']
-            events = muser.iodata.to_midi_note_events(pitch_vector)
+            notes_on = muser.iodata.vector_to_midi_events('ON', pitch_vector,
+                                                          velocity=100)
+            notes_off = muser.iodata.vector_to_midi_events('OFF', pitch_vector)
+            events = [notes_on, notes_off]
             capturer.capture_events(events, rtmidi_send_events)
             recording['buffer'] = capturer.drop_captured()
 
