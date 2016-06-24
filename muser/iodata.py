@@ -12,6 +12,7 @@ import rtmidi
 import jack
 import music21
 from scipy.io import wavfile
+import muser.utils
 
 SND_DTYPES = {'int16': 16, 'int32': 32}
 """ Data types that SciPy can import from `.wav`"""
@@ -27,6 +28,9 @@ STATUS_ALIASES = {'NOTE_ON': NOTE_ON, 'ON': NOTE_ON,
 JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
                    'midi_inports':'midi_in_{}', 'midi_outports':'midi_out_{}'}
 """ Types of `jack` ports and their default naming. """
+
+
+
 
 
 def _register_ports(jack_client, **port_args):
@@ -73,6 +77,7 @@ class JackAudioCapturer(jack.Client):
         _register_ports(self, inports=inports)
         self._inport_enum = list(enumerate(self.inports))
         self.toggle = False
+        self._lock = False
         self.set_process_callback(self._capture)
         self._captured = [[] for p in self._inport_enum]
         self._timepoints = []
@@ -85,8 +90,10 @@ class JackAudioCapturer(jack.Client):
     def _capture(self, frames):
         """ The capture process. Runs continuously with activated client. """
         if self.toggle:
+            self._lock = True
             for p, inport in self._inport_enum:
                 self._captured[p].append(inport.get_array())
+            self._lock = False
 
     def capture_events(self, events, send_events, blocks=0):
         """ Send a group of MIDI events and capture the result.
@@ -111,6 +118,7 @@ class JackAudioCapturer(jack.Client):
         t_stop = time.time()
         self._timepoints.append((t_start, t_stop))
 
+    @muser.utils.wait('_lock')
     def drop_captured(self):
         """ Return and empty the array of captured buffers.
 
@@ -132,11 +140,13 @@ class JackAudioCapturer(jack.Client):
         return np.array(self._xruns)
 
     @property
+    @muser.utils.wait('_lock')
     def n(self):
         """int: The number of blocks captured per inport so far."""
         return len(self._captured[0])
 
     @property
+    @muser.utils.wait('_lock')
     def last(self):
         """list: The last group of buffer arrays captured. """
         return [ch[-1] for ch in self._captured]
