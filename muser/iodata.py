@@ -71,24 +71,22 @@ class JackAudioCapturer(jack.Client):
     def __init__(self, name='CapturerClient', inports=1):
         super().__init__(name=name)
         _register_ports(self, inports=inports)
-        self._buffer_array = np.zeros([len(self.inports), 1, self.blocksize],
-                                      dtype=np.float64)
-        self._xruns = []
-        self._capture_times = []
-        self.capture_toggle = False
-        self.captured = self._empty_captured
+        self._inport_enum = list(enumerate(self.inports))
+        self.toggle = False
         self.set_process_callback(self._capture)
-        self.set_xrun_callback(self._log_xrun)
+        self._captured = [[] for p in self._inport_enum]
+        self._timepoints = []
+        self.set_xrun_callback(self._handle_xrun)
+        self._xruns = []
 
-    def _log_xrun(self, delay_usecs):
+    def _handle_xrun(self, delay_usecs):
         self._xruns.append((time.time(), delay_usecs))
 
     def _capture(self, frames):
         """ The capture process. Runs continuously with activated client. """
-        if self.capture_toggle:
-            for p, inport in enumerate(self.inports):
-                self._buffer_array[p] = inport.get_array()
-            self.captured = np.append(self.captured, self._buffer_array, axis=1)
+        if self.toggle:
+            for p, inport in self._inport_enum:
+                self._captured[p].append(inport.get_array())
 
     def capture_events(self, events, send_events, blocks=0):
         """ Send a group of MIDI events and capture the result.
@@ -98,40 +96,35 @@ class JackAudioCapturer(jack.Client):
             send_events (function):
         """
         t_start = time.time()
-        self.capture_toggle = True
+        self.toggle = True
         send_events(events[0])
-        while not self.n or not np.any(self.last):
+        while not self.n or not any(self.last[0]):
             pass
         if blocks:
             while self.n < blocks:
                 pass
         else:
-            while np.any(self.last):
+            while any(self.last[0]):
                 pass
-        self.capture_toggle = False
+        self.toggle = False
         send_events(events[1])
         t_stop = time.time()
-        self._capture_times.append((t_start, t_stop))
+        self._timepoints.append((t_start, t_stop))
 
-    def drop_captured(self, reset_xruns=True):
+    def drop_captured(self):
         """ Return and empty the array of captured buffers.
 
         Returns:
             captured (np.ndarray): Previously captured and stored buffer arrays.
         """
-        captured = np.copy(self.captured)
-        self.captured = self._empty_captured
+        captured = np.array(self._captured, dtype=np.float32)
+        self._captured = [[] for p in self._inport_enum]
         return captured
 
     @property
-    def _empty_captured(self):
-        """np.ndarray: Empty array for storage of captured buffers. """
-        return np.ndarray([len(self.inports), 0, self.blocksize])
-
-    @property
-    def capture_times(self):
-        """np.ndarray: Array of capture start and stop times. """
-        return np.array(self._capture_times)
+    def timepoints(self):
+        """np.ndarray: Array of capture start and stop timepoints. """
+        return np.array(self._timepoints)
 
     @property
     def xruns(self):
@@ -140,16 +133,13 @@ class JackAudioCapturer(jack.Client):
 
     @property
     def n(self):
-        """int: The number of buffer array groups stored in ``self.captured``.
-
-        Depends on capture time but not the number of inports.
-        """
-        return self.captured.shape[1]
+        """int: The number of blocks captured per inport so far."""
+        return len(self._captured[0])
 
     @property
     def last(self):
-        """np.ndarray: The last group of buffer arrays captured. """
-        return self.captured[:, -1]
+        """list: The last group of buffer arrays captured. """
+        return [ch[-1] for ch in self._captured]
 
 
 def disable_jack_client(jack_client):
