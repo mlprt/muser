@@ -73,9 +73,15 @@ class JackAudioCapturer(jack.Client):
         _register_ports(self, inports=inports)
         self._buffer_array = np.zeros([len(self.inports), 1, self.blocksize],
                                       dtype=np.float64)
+        self._xruns = []
+        self._capture_times = []
         self.capture_toggle = False
         self.captured = self._empty_captured
         self.set_process_callback(self._capture)
+        self.set_xrun_callback(self._log_xrun)
+
+    def _log_xrun(self, delay_usecs):
+        self._xruns.append((time.time(), delay_usecs))
 
     def _capture(self, frames):
         """ The capture process. Runs continuously with activated client. """
@@ -91,6 +97,7 @@ class JackAudioCapturer(jack.Client):
             events (np.ndarray):
             send_events (function):
         """
+        t_start = time.time()
         self.capture_toggle = True
         send_events(events[0])
         while not self.n or not np.any(self.last):
@@ -103,13 +110,10 @@ class JackAudioCapturer(jack.Client):
                 pass
         self.capture_toggle = False
         send_events(events[1])
+        t_stop = time.time()
+        self._capture_times.append((t_start, t_stop))
 
-    @property
-    def _empty_captured(self):
-        """np.ndarray: An (empty) array for storage of captured buffers. """
-        return np.ndarray([len(self.inports), 0, self.blocksize])
-
-    def drop_captured(self):
+    def drop_captured(self, reset_xruns=True):
         """ Return and empty the array of captured buffers.
 
         Returns:
@@ -118,6 +122,21 @@ class JackAudioCapturer(jack.Client):
         captured = np.copy(self.captured)
         self.captured = self._empty_captured
         return captured
+
+    @property
+    def _empty_captured(self):
+        """np.ndarray: Empty array for storage of captured buffers. """
+        return np.ndarray([len(self.inports), 0, self.blocksize])
+
+    @property
+    def capture_times(self):
+        """np.ndarray: Array of capture start and stop times. """
+        return np.array(self._capture_times)
+
+    @property
+    def xruns(self):
+        """np.ndarray: Array of logged xrun times. """
+        return np.array(self._xruns)
 
     @property
     def n(self):
@@ -183,10 +202,9 @@ def get_client_send_events(rtmidi_out):
 
 
 def midi_all_notes_off(midi_basic=False, pitch_range=(0, 128)):
-    """Send MIDI event(s) to release (turn off) all notes.
+    """Return MIDI event(s) to turn off all notes in range.
 
     Args:
-        midi_out (rtmidi.MidiOut): An `rtmidi` MIDI output client
         midi_basic (bool): Switches MIDI event type to turn notes off.
             Use NOTE_OFF events for each note if True, and single
             ALL_NOTES_OFF event if False.
