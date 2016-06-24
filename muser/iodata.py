@@ -15,7 +15,7 @@ from scipy.io import wavfile
 import muser.utils
 
 SND_DTYPES = {'int16': 16, 'int32': 32}
-""" Data types that SciPy can import from `.wav`"""
+"""Data types that SciPy can import from `.wav`"""
 
 N_PITCHES = 127
 NOTE_ON = 0x90
@@ -23,18 +23,15 @@ NOTE_OFF = 0x80
 ALL_NOTES_OFF = 0x7B
 STATUS_ALIASES = {'NOTE_ON': NOTE_ON, 'ON': NOTE_ON,
                   'NOTE_OFF': NOTE_OFF, 'OFF': NOTE_OFF}
-""" MIDI parameters. """
+"""MIDI parameters."""
 
 JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
                    'midi_inports':'midi_in_{}', 'midi_outports':'midi_out_{}'}
-""" Types of `jack` ports and their default naming. """
-
-
-
+"""Types of `jack` ports and their default naming."""
 
 
 def _register_ports(jack_client, **port_args):
-    """ Register a JACK client's ports of the given type and number.
+    """Register a JACK client's ports of the given type and number.
 
     Note:
         It is the caller's responsibility to properly specify `**port_args`,
@@ -53,7 +50,7 @@ def _register_ports(jack_client, **port_args):
 
 def init_jack_client(name="MuserClient", inports=0, outports=0,
                      midi_inports=0, midi_outports=0):
-    """ Return an inactive `jack` client with registered ports. """
+    """Return an inactive `jack` client with registered ports. """
     jack_client = jack.Client(name)
     _register_ports(jack_client, inports=inports, outports=outports,
                    midi_inports=midi_inports, midi_outports=midi_outports)
@@ -61,7 +58,7 @@ def init_jack_client(name="MuserClient", inports=0, outports=0,
 
 
 class JackAudioCapturer(jack.Client):
-    """ JACK client with process capturing audio inports when toggled.
+    """JACK client with process capturing audio inports when toggled.
 
     Attributes:
         capture_toggle (bool): While ``True``, instance captures buffers.
@@ -76,49 +73,51 @@ class JackAudioCapturer(jack.Client):
         super().__init__(name=name)
         _register_ports(self, inports=inports)
         self._inport_enum = list(enumerate(self.inports))
-        self.toggle = False
-        self._lock = False
         self.set_process_callback(self._capture)
         self._captured = [[] for p in self._inport_enum]
-        self._timepoints = []
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
+
+        self._capture_toggle = False
+        self._process_lock = False
+        self._timepoints = []
 
     def _handle_xrun(self, delay_usecs):
         self._xruns.append((time.time(), delay_usecs))
 
+    @muser.utils.if_true('_capture_toggle')
+    @muser.utils.set_true('_process_lock')
     def _capture(self, frames):
         """ The capture process. Runs continuously with activated client. """
-        if self.toggle:
-            self._lock = True
-            for p, inport in self._inport_enum:
-                self._captured[p].append(inport.get_array())
-            self._lock = False
+        for p, inport in self._inport_enum:
+            self._captured[p].append(inport.get_array())
 
-    def capture_events(self, events, send_events, blocks=0):
-        """ Send a group of MIDI events and capture the result.
+    @muser.utils.record_timepoints('_timepoints')
+    @muser.utils.set_true('_capture_toggle')
+    def capture_events(self, events_sequence, send_events, blocks=None):
+        """ Send groups of MIDI events in series and capture the result.
 
         Args:
-            events (np.ndarray):
+            events_sequence (List[np.ndarray]):
             send_events (function):
+            blocks (list): Number of JACK buffers to record for each
         """
-        t_start = time.time()
-        self.toggle = True
-        send_events(events[0])
-        while not self.n or not any(self.last[0]):
-            pass
-        if blocks:
-            while self.n < blocks:
+        for e, events in enumerate(events_sequence):
+            send_events(events)
+            while not self.n or not any(self.last[0]):
                 pass
-        else:
-            while any(self.last[0]):
-                pass
-        self.toggle = False
-        send_events(events[1])
-        t_stop = time.time()
-        self._timepoints.append((t_start, t_stop))
+            if blocks:
+                try:
+                    blocks_e = blocks[e]
+                except TypeError:
+                    blocks_e = blocks
+                while self.n < blocks_e:
+                    pass
+            else:
+                while any(self.last[0]):
+                    pass
 
-    @muser.utils.wait('_lock')
+    @muser.utils.wait_while('_process_lock')
     def drop_captured(self):
         """ Return and empty the array of captured buffers.
 
@@ -140,13 +139,13 @@ class JackAudioCapturer(jack.Client):
         return np.array(self._xruns)
 
     @property
-    @muser.utils.wait('_lock')
+    @muser.utils.wait_while('_process_lock')
     def n(self):
         """int: The number of blocks captured per inport so far."""
         return len(self._captured[0])
 
     @property
-    @muser.utils.wait('_lock')
+    @muser.utils.wait_while('_process_lock')
     def last(self):
         """list: The last group of buffer arrays captured. """
         return [ch[-1] for ch in self._captured]

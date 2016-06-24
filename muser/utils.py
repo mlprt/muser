@@ -3,32 +3,74 @@
 import numpy as np
 import peakutils
 import functools
+import time
 
-
-def wait(lock_attr):
-    """Returns a decorator that waits for a ``False`` instance attribute."""
-    def wait_decorator(func):
-        """Waits on a lock attribute before executing an instance method."""
-        @functools.wraps(func)
+def wait_while(toggle_attr):
+    """Returns a decorator that waits for an instance attribute to be false."""
+    def wait_while_decorator(instance_method):
+        """Waits on a toggle attribute before executing an instance method."""
+        @functools.wraps(instance_method)
         def wrapper(self, *args, **kwargs):
-            while getattr(self, lock_attr):
+            while getattr(self, toggle_attr):
                 pass
-            return func(self, *args, **kwargs)
+            return instance_method(self, *args, **kwargs)
 
         return wrapper
-    return wait_decorator
+    return wait_while_decorator
 
 
-def get_peaks(amp, frq, thres):
-    """ """
+def set_true(toggle_attr):
+    """Returns a decorator that enables an attribute during execution."""
+    def set_true_decorator(instance_method):
+        """Enables a boolean attribute while the decorated method executes."""
+        @functools.wraps(instance_method)
+        def wrapper(self, *args, **kwargs):
+            setattr(self, toggle_attr, True)
+            output = instance_method(self, *args, **kwargs)
+            setattr(self, toggle_attr, False)
+            return output
+
+        return wrapper
+    return set_true_decorator
+
+
+def if_true(toggle_attr):
+    """Returns a decorator that executes a method if a condition is met."""
+    def if_true_decorator(instance_method):
+        """Execute the decorated method conditional on a toggle attribute."""
+        @functools.wraps(instance_method)
+        def wrapper(self, *args, **kwargs):
+            if getattr(self, toggle_attr):
+                return instance_method(self, *args, **kwargs)
+
+        return wrapper
+    return if_true_decorator
+
+
+def record_timepoints(timepoints_list_attr):
+    def record_timepoints_decorator(instance_method):
+        @functools.wraps(instance_method)
+        def wrapper(self, *args, **kwargs):
+            start = time.time()
+            output = instance_method(self, *args, **kwargs)
+            stop = time.time()
+            getattr(self, timepoints_list_attr).append((start, stop))
+            return output
+
+        return wrapper
+    return record_timepoints_decorator
+
+
+def get_peaks(y, x, thres):
+    """Return the peaks in data that exceed a relative threshold."""
     try:
-        peaks_idx = [peakutils.indexes(ch, thres=thres) for ch in amp]
+        peaks_idx = [peakutils.indexes(ch, thres=thres) for ch in y]
         # TODO: could convert to numpy (constant size) if assign peaks
         #       to harmonic object containing all notes
         #       (could also be used for training)
-        peaks = [(frq[idx], amp[i][idx]) for i, idx in enumerate(peaks_idx)]
+        peaks = [(x[idx], y[i][idx]) for i, idx in enumerate(peaks_idx)]
     except TypeError:  # amp not iterable
-        return get_peaks([amp], frq, thres=thres)
+        return get_peaks([y], x, thres=thres)
 
     return peaks
 

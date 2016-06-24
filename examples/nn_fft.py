@@ -37,7 +37,7 @@ rtmidi_send_events = muser.iodata.get_client_send_events(rtmidi_out)
 
 # Training parameters
 chord_size = 1
-batch_size = 2
+batch_size = 10
 batches = 2
 learning_rate = 0.001
 
@@ -66,11 +66,10 @@ try:
                                                           velocity=100)
             notes_off = muser.iodata.vector_to_midi_events('OFF', pitch_vector)
             events = [notes_on, notes_off]
-            capturer.capture_events(events, rtmidi_send_events, blocks=50)
+            capturer.capture_events(events, rtmidi_send_events, blocks=(50, 0))
             recording['buffer'] = capturer.drop_captured()
 
 except (KeyboardInterrupt, SystemExit):
-    capturer.toggle = False
     print('\nUser or system interrupt, dismantling JACK clients!')
     # synthesizer
     rtmidi_send_events(muser.iodata.midi_all_notes_off(midi_basic=True))
