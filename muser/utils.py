@@ -5,6 +5,7 @@ import peakutils
 import functools
 import time
 
+
 def wait_while(toggle_attr):
     """Returns a decorator that waits for an instance attribute to be false."""
     def wait_while_decorator(instance_method):
@@ -35,7 +36,7 @@ def set_true(toggle_attr):
 
 
 def if_true(toggle_attr):
-    """Returns a decorator that executes a method if a condition is met."""
+    """Returns a decorator that executes its method if a condition is met."""
     def if_true_decorator(instance_method):
         """Execute the decorated method conditional on a toggle attribute."""
         @functools.wraps(instance_method)
@@ -48,7 +49,9 @@ def if_true(toggle_attr):
 
 
 def record_timepoints(timepoints_list_attr):
+    """Returns a decorator that records function entry and return times."""
     def record_timepoints_decorator(instance_method):
+        """Append decorated function's entry and return times to attribute."""
         @functools.wraps(instance_method)
         def wrapper(self, *args, **kwargs):
             start = time.time()

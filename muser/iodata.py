@@ -8,17 +8,16 @@ capture endpoints and buffer overrun/underrun events.
 Conversion of vector representations of notes and chords to MIDI events.
 """
 
-import sys
+import numpy as np
+import scipy.io.wavfile
+import jack
+import muser.utils
 import time
 import struct
-import numpy as np
 import rtmidi
-import jack
-from scipy.io import wavfile
-import muser.utils
 
 SND_DTYPES = {'int16': 16, np.int16: 16, 'int32': 32, np.int32: 32}
-"""Data types that SciPy can import from `.wav`"""
+"""Data types that SciPy can import from ``.wav``"""
 
 N_PITCHES = 127
 NOTE_ON = 0x90
@@ -26,11 +25,11 @@ NOTE_OFF = 0x80
 ALL_NOTES_OFF = 0x7B
 STATUS_ALIASES = {'NOTE_ON': NOTE_ON, 'ON': NOTE_ON,
                   'NOTE_OFF': NOTE_OFF, 'OFF': NOTE_OFF}
-"""MIDI parameters."""
+"""MIDI constants."""
 
 JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
                    'midi_inports':'midi_in_{}', 'midi_outports':'midi_out_{}'}
-"""Types of `jack` ports and their default naming."""
+"""Default naming of JACK port types."""
 
 
 def _register_ports(jack_client, **port_args):
@@ -60,7 +59,7 @@ def init_jack_client(name="MuserClient", inports=0, outports=0,
     return jack_client
 
 
-class JackAudioCapturer(jack.Client):
+class JACKAudioCapturer(jack.Client):
     """JACK client binding a process that captures audio inports.
 
     Args:
@@ -72,7 +71,7 @@ class JackAudioCapturer(jack.Client):
         super().__init__(name=name)
         _register_ports(self, inports=inports)
         self._inport_enum = list(enumerate(self.inports))
-        self.set_process_callback(self._capture)
+        self.set_process_callback(self.__capture)
         self._captured = [[] for p in self._inport_enum]
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
@@ -294,7 +293,7 @@ def wav_read_unit(wavfile_name):
         sample_rate (int): The file's audio sampling rate.
         snd (np.ndarray): The file's audio samples as ``float``.
     """
-    sample_rate, snd = wavfile.read(wavfile_name)
+    sample_rate, snd = scipy.io.wavfile.read(wavfile_name)
     snd = unit_snd(snd)
     return sample_rate, snd
 

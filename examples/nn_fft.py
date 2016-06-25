@@ -25,8 +25,6 @@ import tensorflow as tf
 import muser.iodata as iodata
 import muser.sequencer as sequencer
 import muser.utils as utils
-import muser.fft
-import matplotlib.pyplot as plt
 import scipy.io.wavfile
 
 # Synthesizer MIDI ports
@@ -39,7 +37,7 @@ channels = len(synth_outports)
 capturer = iodata.JACKAudioCapturer(inports=channels)
 samplerate = capturer.samplerate
 
-# ``rtmidi`` initialization
+# MIDI output client initialization
 rtmidi_out = iodata.init_rtmidi_out()
 rtmidi_send_events = iodata.get_client_send_events(rtmidi_out)
 
