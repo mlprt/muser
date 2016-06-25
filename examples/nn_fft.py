@@ -1,12 +1,21 @@
 """ Learn to predict notes from FFT data.
 
-Send notes to MIDI synthesizer, then calculate FFT for resulting audio; FFT becomes input for neural network, while the known notes that produced it are training outputs.
+Send notes to MIDI synthesizer, then calculate FFT for resulting audio. FFT
+becomes input for neural network, while the known notes that produced it become
+training outputs.
 
-Starting with input FFT length equal to JACK buffer size, output vector with length 88 corresponding to all notes on a standard piano, and one hidden layer. By heuristics, number of neurons in single hidden layer likely between 88 and 512.
+Starting with input FFT length equal to JACK buffer size, the output vector has
+length 88 corresponding to all notes on a standard piano. Start with one hidden
+layer, which by heuristic should have between 88 and 512 neurons.
 
-Each note played will produce many buffers worth of audio data. FFT should vary over the duration of the note, but this can be minimized by disabling certain features of the synthesizer. Initially, play isolated notes/chords and take the FFTs at maximum amplitude as inputs, or use an average over the duration. As more complex examples are investigated, will need more nuanced algorithm to isolate harmonic features.
+Each note played will produce many JACK buffers worth of audio data. FFT will
+vary over the duration of the note, which can be minimized by disabling certain
+synthesizer features. Will initially record isolated notes/chords and take the
+FFTs at maximum/average amplitude as inputs. As more complex examples are
+investigated, will need to isolate harmonic features.
 
-Currently using `rtmidi` to send notes to the synthesizer, as this is much simpler to time without messing with threading and buffer offsets through `jack`, which now monitors audio buffers output from the synthesizer. Hope to eliminate one of these dependencies eventually.
+Temporarily using ``rtmidi`` to send notes to the synthesizer, as it is simpler
+to time without involving ``jack`` threading and buffer offsets.
 
 TODO: Switch to TensorFlow batch 1D FFT when supported by OpenCL
 """
