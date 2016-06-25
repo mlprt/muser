@@ -12,7 +12,7 @@ import jack
 from scipy.io import wavfile
 import muser.utils
 
-SND_DTYPES = {'int16': 16, 'int32': 32}
+SND_DTYPES = {'int16': 16, np.int16: 16, 'int32': 32, np.int32: 32}
 """Data types that SciPy can import from `.wav`"""
 
 N_PITCHES = 127
@@ -294,24 +294,31 @@ def wav_read_unit(wavfile_name):
     return sample_rate, snd
 
 
-def buffers_to_snd(buffers, stereo=True, dtype='int32'):
+def buffers_to_snd(buffers, stereo=True, channel_ind=None, dtype=np.int32):
     """ Convert a series of JACK buffers to 2-channel SciPy audio.
 
     Args:
-        buffers (np.ndarray): Series of JACK buffers in a 3D array.
-            Second dimension size is number of buffers, third is `buffer_size`.
-        stereo (bool): If `True`, the two channels of `snd` are taken from
-            `buffers[0:2]`, else both copied from `buffers[0]` (mono).
+        buffers (np.ndarray): Series of JACK buffers in a 3D array. Second
+            dimension length is number of channels, third is ``buffer_size``.
+        stereo (bool): If ``True``, the two channels of ``snd`` are taken by
+            default from ``buffers[0:2]``, else both from ``buffers[0]`` (mono).
+        channel_ind: If stereo, can be a length-2 ``slice`` or a Numpy advanced
+            index selecting two channels in ``buffers``. If mono, an integer,
+            slice, or Numpy advanced index for a single channel must be passed.
         dtype (str): Datatype of the returned array.
-            Should be 'int32' or 'int16' for SciPy compatibility.
+            Must be a key in ``SND_DTYPES`` to ensure SciPy compatibility.
 
     Returns:
         snd (np.ndarray): SciPy-compatible array of audio frames.
     """
     if stereo:
-        buffers_ = buffers[0:2]
+        if channel_ind is None:
+            channel_ind = slice(0, 2)
+        buffers_ = buffers[channel_ind]
     else:
-        buffers_ = np.concatenate((buffers[0], buffers[0]))
+        if channel_ind is None:
+            channel_ind = 0
+        buffers_ = np.concatenate(np.atleast_2d(buffers[channel_ind]) * 2)
     snd = buffers_.reshape((2, buffers_.size // 2)).T
     snd = snd * 2.**(SND_DTYPES[dtype] - 1)
     snd = snd.astype(dtype)
@@ -319,15 +326,25 @@ def buffers_to_snd(buffers, stereo=True, dtype='int32'):
 
 
 def unpack_midi_event(event_in):
-    """Convert received MIDI event parameters from binary to tuple form."""
+    """Convert received MIDI event parameters from binary to tuple form.
+
+    Args:
+        event_in: Iterable containing sample offset (in buffer) as first
+            element and binary MIDI event specifier as second element.
+
+    Returns:
+        unpacked_event (tuple): Series of integers specifying the MIDI event.
+            The first element is status and is always defined for events. This
+            tuple's length is in ``range(1, 4)``.
+    """
     _, indata = event_in
     for n_items in range(3, 0, -1):
         try:
-            unpacked = struct.unpack('{}B'.format(n_items), indata)
+            unpacked_event = struct.unpack('{}B'.format(n_items), indata)
         except struct.error:
             pass
     try:
-        return unpacked
+        return unpacked_event
     except NameError:
         raise ValueError("event_in not an unpackable binary representation "
                          "of a MIDI event tuple")
