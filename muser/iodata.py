@@ -1,6 +1,11 @@
-"""Input and output of music data, including `.wav` and live MIDI.
+"""Input and output of music data, including ``.wav`` and live MIDI.
 
-Low-latency audio connectivity is provided by python-rtmidi via JACK.
+Includes extensions of ``jack`` that allow automatic registration of multiple
+client ports, easier capturing of buffer arrays from an arbitrary number of
+inports, sending of sequences of events to capture, and tracking times of
+capture endpoints and buffer overrun/underrun events.
+
+Conversion of vector representations of notes and chords to MIDI events.
 """
 
 import sys
@@ -56,7 +61,7 @@ def init_jack_client(name="MuserClient", inports=0, outports=0,
 
 
 class JackAudioCapturer(jack.Client):
-    """JACK client with process capturing audio inports when toggled.
+    """JACK client binding a process that captures audio inports.
 
     Args:
         name (str): Client name.
