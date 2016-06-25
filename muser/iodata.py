@@ -5,12 +5,10 @@ Low-latency audio connectivity is provided by python-rtmidi via JACK.
 
 import sys
 import time
-import binascii
 import struct
 import numpy as np
 import rtmidi
 import jack
-import music21
 from scipy.io import wavfile
 import muser.utils
 
@@ -320,33 +318,16 @@ def buffers_to_snd(buffers, stereo=True, dtype='int32'):
     return snd
 
 
-def unpack_midi_event(event):
-    """  """
-    pass
-
-def report_midi_event(event, last_frame_time=0, out=sys.stdout):
-    """ Print details of a JACK MIDI event.
-
-    Note:
-        Does not apply to tuples specifying events, as with ``rtmidi``.
-        Retaining this material with intent for further ``jack`` integration.
-
-    Args:
-        event ():
-        last_frame_time (int):
-        out ():
-    """
-    offset, indata = event
-    #print(struct.unpack(str(len(indata))+'B\n', indata))
+def unpack_midi_event(event_in):
+    """Convert received MIDI event parameters from binary to tuple form."""
+    _, indata = event_in
+    for n_items in range(3, 0, -1):
+        try:
+            unpacked = struct.unpack('{}B'.format(n_items), indata)
+        except struct.error:
+            pass
     try:
-        status, pitch, vel = struct.unpack('3B', indata)
-    except struct.error:
-
-        return
-    rprt = "{0} + {1}:\t0x{2}\n".format(last_frame_time,offset,
-                                      binascii.hexlify(indata).decode())
-    #rprt += "indata: {0}\n".format(indata)
-    rprt += "status: {0},\tpitch: {1},\tvel.: {2}\n".format(status, pitch, vel)
-    #rprt += "repacked: {0}".format(struct.pack('3B', status, pitch, vel))
-    rprt += "\n"
-    out.write(rprt)
+        return unpacked
+    except NameError:
+        raise ValueError("event_in not an unpackable binary representation "
+                         "of a MIDI event tuple")
