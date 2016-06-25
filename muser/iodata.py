@@ -34,13 +34,13 @@ def _register_ports(jack_client, **port_args):
     """Register a JACK client's ports of the given type and number.
 
     Note:
-        It is the caller's responsibility to properly specify `**port_args`,
+        It is the caller's responsibility to properly specify ``**port_args``,
         and to document them!
 
     Args:
-        jack_client (`jack.Client`): The client to register the ports.
+        jack_client (jack.Client): The client to register the ports.
         **port_args: Keywords give port type, args give quantity to register.
-            `port_args.keys()` must be a subset of `JACK_PORT_NAMES.keys()`
+            ``port_args.keys()`` must be a subset of ``JACK_PORT_NAMES.keys()``
     """
     for port_type, n in port_args.items():
         ports = getattr(jack_client, port_type)
@@ -59,10 +59,6 @@ def init_jack_client(name="MuserClient", inports=0, outports=0,
 
 class JackAudioCapturer(jack.Client):
     """JACK client with process capturing audio inports when toggled.
-
-    Attributes:
-        capture_toggle (bool): While ``True``, instance captures buffers.
-        captured (np.ndarray): Buffers captured since instantiation or drop.
 
     Args:
         name (str): Client name.
@@ -100,21 +96,25 @@ class JackAudioCapturer(jack.Client):
         Args:
             events_sequence (List[np.ndarray]):
             send_events (function):
-            blocks (list): Number of JACK buffers to record for each
+            blocks (list): Number of JACK buffers to record for each set of
+                events. If ``None``, records until silence
         """
+        try:
+            if not len(blocks) == len(events_sequence):
+                raise ValueError("List of numbers of blocks to record was "
+                                 "given instead of a constant, but its length "
+                                 "does not match that of events sequence")
+        except TypeError:
+            blocks = [blocks] * len(events_sequence)
         for e, events in enumerate(events_sequence):
             send_events(events)
             while not self.n or not any(self.last[0]):
                 pass
-            if blocks:
-                try:
-                    blocks_e = blocks[e]
-                except TypeError:
-                    blocks_e = blocks
-                while self.n < blocks_e:
+            if blocks[e] is None:
+                while any(self.last[0]):
                     pass
             else:
-                while any(self.last[0]):
+                while self.n < blocks[e]:
                     pass
 
     @muser.utils.wait_while('_process_lock')
