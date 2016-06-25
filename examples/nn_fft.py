@@ -13,14 +13,12 @@ TODO: Switch to TensorFlow batch 1D FFT when supported by OpenCL
 
 import numpy as np
 import tensorflow as tf
-import muser.iodata
-import muser.sequencer
-import muser.utils
+import muser.iodata as iodata
+import muser.sequencer as sequencer
+import muser.utils as utils
 import muser.fft
 import matplotlib.pyplot as plt
 import scipy.io.wavfile
-
-N_MIDI_PITCHES = 127
 
 # Synthesizer MIDI ports
 synth_outports = ["Pianoteq55:out_1", "Pianoteq55:out_2"]
@@ -28,66 +26,64 @@ synth_midi_in = "Pianoteq55:midi_in"
 
 channels = len(synth_outports)
 
-# `jack` capture client initialization
-capturer = muser.iodata.JackAudioCapturer(inports=channels)
+# JACK capture client initialization
+capturer = iodata.JACKAudioCapturer(inports=channels)
+samplerate = capturer.samplerate
 
-# `rtmidi` initialization
-rtmidi_out = muser.iodata.init_rtmidi_out()
-rtmidi_send_events = muser.iodata.get_client_send_events(rtmidi_out)
+# ``rtmidi`` initialization
+rtmidi_out = iodata.init_rtmidi_out()
+rtmidi_send_events = iodata.get_client_send_events(rtmidi_out)
 
 # Training parameters
-chord_size = 1
-batch_size = 10
-batches = 2
+chord_size = 3
+batch_size = 5
+batches = 1
 learning_rate = 0.001
 
 # storage of results
 # TODO: velocity vectors
-rec_dtype = np.dtype([('pitch_vector', np.uint8, N_MIDI_PITCHES),
+rec_dtype = np.dtype([('pitch_vector', np.uint8, iodata.N_PITCHES),
                       ('buffer', object)])
 recordings = np.ndarray([batches, batch_size], dtype=rec_dtype)
 
 # generate note batches
-random_pitch_vector = muser.sequencer.random_pitch_vector
-recordings['pitch_vector'] = muser.utils.get_batches(random_pitch_vector,
-                                                      batches, batch_size,
-                                                      [chord_size])
+recordings['pitch_vector'] = utils.get_batches(sequencer.random_pitch_vector,
+                                               batches, batch_size,
+                                               [chord_size])
 
 capturer.activate()
 try:
-    # connect synthesizer stereo audio outputs to `jack` client inputs
+    # connect synthesizer stereo audio outputs to ``jack`` client inputs
     for port_pair in zip(synth_outports, capturer.inports):
         capturer.connect(*port_pair)
 
     for batch in recordings:
         for recording in batch:
             pitch_vector = recording['pitch_vector']
-            notes_on = muser.iodata.vector_to_midi_events('ON', pitch_vector,
-                                                          velocity=100)
-            notes_off = muser.iodata.vector_to_midi_events('OFF', pitch_vector)
+            notes_on = iodata.vector_to_midi_events('ON', pitch_vector,
+                                                    velocity=100)
+            notes_off = iodata.vector_to_midi_events('OFF', pitch_vector)
             events = [notes_on, notes_off]
             capturer.capture_events(events, rtmidi_send_events, blocks=(50, 0))
             recording['buffer'] = capturer.drop_captured()
 
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
-    # synthesizer
-    rtmidi_send_events(muser.iodata.midi_all_notes_off(midi_basic=True))
-    # close `rtmidi` and `jack` clients
+    rtmidi_send_events(iodata.midi_all_notes_off(midi_basic=True))
     del rtmidi_out
-    muser.iodata.disable_jack_client(capturer)
+    iodata.disable_jack_client(capturer)
     raise
+print("xruns: {}".format(len(capturer.xruns)))
+iodata.disable_jack_client(capturer)
 
 # store audio results
 recordings.dump('recordings.pickle')
 
 for b, batch in enumerate(recordings):
     for p, recording in enumerate(batch):
-        snd = muser.iodata.buffers_to_snd(recording['buffer'])
+        snd = iodata.buffers_to_snd(recording['buffer'])
         wavfile_name = 'b{}p{}.wav'.format(b, p)
-        scipy.io.wavfile.write(wavfile_name, capturer.samplerate, snd)
-
-muser.iodata.disable_jack_client(capturer)
+        scipy.io.wavfile.write(wavfile_name, samplerate, snd)
 
 quit()
 
