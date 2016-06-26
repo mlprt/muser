@@ -9,6 +9,7 @@ Conversion of vector representations of notes and chords to MIDI events.
 """
 
 import numpy as np
+import copy
 import scipy.io.wavfile
 import jack
 import muser.utils
@@ -76,8 +77,6 @@ class JACKAudioCapturer(jack.Client):
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
 
-        self._nnn = 0
-
         self._capture_toggle = False
         self._process_lock = False
         self._timepoints = []
@@ -90,18 +89,22 @@ class JACKAudioCapturer(jack.Client):
     def _capture(self, frames):
         """ The capture process. Runs continuously with activated client. """
         for p, inport in self._inport_enum:
-            self._captured[p].append(inport.get_array())
+            buffer_ = copy.copy(inport.get_array())
+            self._captured[p].append(buffer_)
 
     @muser.utils.record_timepoints('_timepoints')
     @muser.utils.set_true('_capture_toggle')
-    def capture_events(self, events_sequence, send_events, blocks=None):
+    def capture_events(self, events_sequence, send_events, blocks=None,
+                       init_blocks=0):
         """ Send groups of MIDI events in series and capture the result.
 
         Args:
             events_sequence (List[np.ndarray]):
             send_events (function):
             blocks (list): Number of JACK buffers to record for each set of
-                events. If ``None``, records until silence
+                events. Wherever ``None``, records until silence.
+            init_blocks (int): Number of JACK buffers to record before sending
+                the first set of events.
         """
         try:
             if not len(blocks) == len(events_sequence):
@@ -110,15 +113,18 @@ class JACKAudioCapturer(jack.Client):
                                  "does not match that of events sequence")
         except TypeError:
             blocks = [blocks] * len(events_sequence)
+        while self.n < init_blocks:
+            pass
         for e, events in enumerate(events_sequence):
+            n = self.n
             send_events(events)
-            while not self.n or not any(self.last[0]):
-                pass
             if blocks[e] is None:
+                while not any(self.last[0]):
+                    pass
                 while any(self.last[0]):
                     pass
             else:
-                while self.n < blocks[e]:
+                while (self.n - n) < blocks[e]:
                     pass
 
     @muser.utils.wait_while('_process_lock')
@@ -128,26 +134,7 @@ class JACKAudioCapturer(jack.Client):
         Returns:
             captured (np.ndarray): Previously captured and stored buffer arrays.
         """
-        write_captured("cap0a_{}.txt".format(self._nnn), self._captured)
-        # The next line (numpy conversion of list to array) is what alters
-        # the values. Tried np.concatenate, np.array, np.asarray, np.asfarray,
-        # np.asfortranarray, and dual np.vstack
-        #
-        # Happens anyway (with no sound output at all!) if self._captured
-        # returned and then converted in nn_fft.py
-        # Is _capture() replacing the values? I don't think so, since the
-        # arrays end up being the right length (it concatenates and they
-        # are erased in drop_captured) and re-adding the if statement in
-        # capture does not help
-        #
-        # Values seem to change if self._captured is written out this way
-        # twice without running the numpy conversion. So self._captured
-        # is changing regardless?!
-        #
-        #captured = np.concatenate([self._captured])
-        captured = self._captured[:]
-        write_captured("cap0b_{}.txt".format(self._nnn), self._captured)
-        self._nnn += 1
+        captured = np.concatenate([self._captured])
         self._captured = [[] for p in self._inport_enum]
         return captured
 
@@ -172,19 +159,6 @@ class JACKAudioCapturer(jack.Client):
     def last(self):
         """list: The last group of buffer arrays captured. """
         return [ch[-1] for ch in self._captured]
-
-
-def write_captured(filename, captured, perline=8):
-    with open(filename, 'w') as f:
-        for i, ch in enumerate(captured):
-            f.write("CHANNEL {}\n".format(i))
-            for buff in ch:
-                l = len(buff)
-                for c in range(0, l, perline):
-                    form = '{: .5f} ' * perline
-                    line = form.format(*buff[c:(c + perline)].tolist())
-                    f.write(line + '\n')
-                f.write('\n')
 
 def disable_jack_client(jack_client):
     """Unregister all ports, deactivate, and close a JACK client."""
