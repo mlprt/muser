@@ -36,14 +36,15 @@ channels = len(synth_outports)
 # JACK capture client initialization
 capturer = iodata.JACKAudioCapturer(inports=channels)
 samplerate = capturer.samplerate
+print_n_xruns = True
 
 # MIDI output client initialization
 rtmidi_out = iodata.init_rtmidi_out()
 rtmidi_send_events = iodata.get_client_send_events(rtmidi_out)
 
 # Training parameters
-chord_size = 3
-batch_size = 5
+chord_size = 1
+batch_size = 2
 batches = 1
 learning_rate = 0.001
 
@@ -65,14 +66,16 @@ try:
         capturer.connect(*port_pair)
 
     for batch in recordings:
-        for recording in batch:
+        for r, recording in enumerate(batch):
             pitch_vector = recording['pitch_vector']
             notes_on = iodata.vector_to_midi_events('ON', pitch_vector,
                                                     velocity=100)
             notes_off = iodata.vector_to_midi_events('OFF', pitch_vector)
             events = [notes_on, notes_off]
             capturer.capture_events(events, rtmidi_send_events, blocks=(50, 0))
-            recording['buffer'] = capturer.drop_captured()
+            captured = capturer.drop_captured()
+            iodata.write_captured("cap1a_{}.txt".format(r), captured)
+            recording['buffer'] = np.array(captured)
 
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
@@ -80,7 +83,9 @@ except (KeyboardInterrupt, SystemExit):
     del rtmidi_out
     iodata.disable_jack_client(capturer)
     raise
-print("xruns: {}".format(len(capturer.xruns)))
+
+if print_n_xruns:
+    print("xruns: {}".format(len(capturer.xruns)))
 iodata.disable_jack_client(capturer)
 
 # store audio results
@@ -88,6 +93,7 @@ recordings.dump('recordings.pickle')
 
 for b, batch in enumerate(recordings):
     for p, recording in enumerate(batch):
+        iodata.write_captured("cap1b_{}.txt".format(p), recording['buffer'])
         snd = iodata.buffers_to_snd(recording['buffer'])
         wavfile_name = 'b{}p{}.wav'.format(b, p)
         scipy.io.wavfile.write(wavfile_name, samplerate, snd)

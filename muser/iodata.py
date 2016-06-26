@@ -71,10 +71,12 @@ class JACKAudioCapturer(jack.Client):
         super().__init__(name=name)
         _register_ports(self, inports=inports)
         self._inport_enum = list(enumerate(self.inports))
-        self.set_process_callback(self.__capture)
+        self.set_process_callback(self._capture)
         self._captured = [[] for p in self._inport_enum]
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
+
+        self._nnn = 0
 
         self._capture_toggle = False
         self._process_lock = False
@@ -83,8 +85,8 @@ class JACKAudioCapturer(jack.Client):
     def _handle_xrun(self, delay_usecs):
         self._xruns.append((time.time(), delay_usecs))
 
-    @muser.utils.if_true('_capture_toggle')
     @muser.utils.set_true('_process_lock')
+    @muser.utils.if_true('_capture_toggle')
     def _capture(self, frames):
         """ The capture process. Runs continuously with activated client. """
         for p, inport in self._inport_enum:
@@ -126,7 +128,26 @@ class JACKAudioCapturer(jack.Client):
         Returns:
             captured (np.ndarray): Previously captured and stored buffer arrays.
         """
-        captured = np.array(self._captured, dtype=np.float32)
+        write_captured("cap0a_{}.txt".format(self._nnn), self._captured)
+        # The next line (numpy conversion of list to array) is what alters
+        # the values. Tried np.concatenate, np.array, np.asarray, np.asfarray,
+        # np.asfortranarray, and dual np.vstack
+        #
+        # Happens anyway (with no sound output at all!) if self._captured
+        # returned and then converted in nn_fft.py
+        # Is _capture() replacing the values? I don't think so, since the
+        # arrays end up being the right length (it concatenates and they
+        # are erased in drop_captured) and re-adding the if statement in
+        # capture does not help
+        #
+        # Values seem to change if self._captured is written out this way
+        # twice without running the numpy conversion. So self._captured
+        # is changing regardless?!
+        #
+        #captured = np.concatenate([self._captured])
+        captured = self._captured[:]
+        write_captured("cap0b_{}.txt".format(self._nnn), self._captured)
+        self._nnn += 1
         self._captured = [[] for p in self._inport_enum]
         return captured
 
@@ -152,6 +173,18 @@ class JACKAudioCapturer(jack.Client):
         """list: The last group of buffer arrays captured. """
         return [ch[-1] for ch in self._captured]
 
+
+def write_captured(filename, captured, perline=8):
+    with open(filename, 'w') as f:
+        for i, ch in enumerate(captured):
+            f.write("CHANNEL {}\n".format(i))
+            for buff in ch:
+                l = len(buff)
+                for c in range(0, l, perline):
+                    form = '{: .5f} ' * perline
+                    line = form.format(*buff[c:(c + perline)].tolist())
+                    f.write(line + '\n')
+                f.write('\n')
 
 def disable_jack_client(jack_client):
     """Unregister all ports, deactivate, and close a JACK client."""
