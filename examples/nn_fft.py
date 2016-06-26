@@ -16,8 +16,6 @@ investigated, will need to isolate harmonic features.
 
 Temporarily using ``rtmidi`` to send notes to the synthesizer, as it is simpler
 to time without involving ``jack`` threading and buffer offsets.
-
-TODO: Switch to TensorFlow batch 1D FFT when supported by OpenCL
 """
 
 import numpy as np
@@ -50,14 +48,14 @@ learning_rate = 0.001
 
 # storage of results
 # TODO: velocity vectors
-rec_dtype = np.dtype([('pitch_vector', np.uint8, iodata.N_PITCHES),
-                      ('buffer', object)])
-recordings = np.ndarray([batches, batch_size], dtype=rec_dtype)
+chord_dtype = np.dtype([('pitch_vector', np.uint8, iodata.N_PITCHES),
+                        ('captured_buffers', object)])
+chord_batches = np.ndarray([batches, batch_size], dtype=chord_dtype)
 
 # generate note batches
-recordings['pitch_vector'] = utils.get_batches(sequencer.random_pitch_vector,
-                                               batches, batch_size,
-                                               [chord_size])
+chord_batches['pitch_vector'] = utils.get_batches(sequencer.random_pitch_vector,
+                                                  batches, batch_size,
+                                                  [chord_size])
 
 capturer.activate()
 try:
@@ -65,17 +63,16 @@ try:
     for port_pair in zip(synth_outports, capturer.inports):
         capturer.connect(*port_pair)
 
-    for batch in recordings:
-        for r, recording in enumerate(batch):
-            pitch_vector = recording['pitch_vector']
+    for batch in chord_batches:
+        for chord in batch:
+            pitch_vector = chord['pitch_vector']
             notes_on = iodata.vector_to_midi_events('ON', pitch_vector,
                                                     velocity=100)
             notes_off = iodata.vector_to_midi_events('OFF', pitch_vector)
             events = [notes_on, notes_off]
-            capturer.capture_events(events, rtmidi_send_events, blocks=(50, 0))
-            captured = capturer.drop_captured()
-            iodata.write_captured("cap1a_{}.txt".format(r), captured)
-            recording['buffer'] = np.array(captured)
+            capturer.capture_events(events, rtmidi_send_events, blocks=(50, 25),
+                                    init_blocks=25)
+            chord['captured_buffers'] = capturer.drop_captured()
 
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
@@ -89,19 +86,18 @@ if print_n_xruns:
 iodata.disable_jack_client(capturer)
 
 # store audio results
-recordings.dump('recordings.pickle')
+chord_batches.dump('chord_batches.pickle')
 
-for b, batch in enumerate(recordings):
-    for p, recording in enumerate(batch):
-        iodata.write_captured("cap1b_{}.txt".format(p), recording['buffer'])
-        snd = iodata.buffers_to_snd(recording['buffer'])
-        wavfile_name = 'b{}p{}.wav'.format(b, p)
+for b, batch in enumerate(chord_batches):
+    for c, chord in enumerate(batch):
+        snd = iodata.buffers_to_snd(chord['captured_buffers'])
+        wavfile_name = 'batch{}_chord{}.wav'.format(b, c)
         scipy.io.wavfile.write(wavfile_name, samplerate, snd)
 
 quit()
 
 # Neural network parameters
-inputs = recordings.shape[2]
+inputs = chord_batches.shape[2]
 hidden1_n = 300
 outputs = 88
 
