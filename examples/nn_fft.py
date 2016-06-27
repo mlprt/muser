@@ -32,13 +32,9 @@ synth_midi_in = "Pianoteq55:midi_in"
 channels = len(synth_outports)
 
 # JACK capture client initialization
-capturer = iodata.JACKAudioCapturer(inports=channels)
-samplerate = capturer.samplerate
+jack_client = iodata.ExtendedClient(inports=channels, midi_outports=1)
+samplerate = jack_client.samplerate
 print_n_xruns = True
-
-# MIDI output client initialization
-rtmidi_out = iodata.init_rtmidi_out()
-rtmidi_send_events = iodata.get_client_send_events(rtmidi_out)
 
 # Training parameters
 chord_size = 1
@@ -57,11 +53,13 @@ chord_batches['pitch_vector'] = utils.get_batches(sequencer.random_pitch_vector,
                                                   batches, batch_size,
                                                   [chord_size])
 
-capturer.activate()
+jack_client.activate()
 try:
-    # connect synthesizer stereo audio outputs to ``jack`` client inputs
-    for port_pair in zip(synth_outports, capturer.inports):
-        capturer.connect(*port_pair)
+    # connect MIDI and audio ports of synthesizer and JACK client
+    jack_client.connect(jack_client.midi_outports[0], synth_midi_in)
+    for port_pair in zip(synth_outports, jack_client.inports):
+        port_pair[1].disconnect()
+        jack_client.connect(*port_pair)
 
     for batch in chord_batches:
         for chord in batch:
@@ -70,20 +68,17 @@ try:
                                                     velocity=100)
             notes_off = iodata.vector_to_midi_events('OFF', pitch_vector)
             events = [notes_on, notes_off]
-            capturer.capture_events(events, rtmidi_send_events, blocks=(50, 25),
-                                    init_blocks=25)
-            chord['captured_buffers'] = capturer.drop_captured()
+            jack_client.capture_events(events, blocks=(50, 25), init_blocks=25)
+            chord['captured_buffers'] = jack_client.drop_captured()
 
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
-    rtmidi_send_events(iodata.midi_all_notes_off(midi_basic=True))
-    del rtmidi_out
-    iodata.disable_jack_client(capturer)
+    iodata.disable_jack_client(jack_client)
     raise
 
 if print_n_xruns:
-    print("xruns: {}".format(len(capturer.xruns)))
-iodata.disable_jack_client(capturer)
+    print("xruns: {}".format(len(jack_client.xruns)))
+iodata.disable_jack_client(jack_client)
 
 # store audio results
 chord_batches.dump('chord_batches.pickle')

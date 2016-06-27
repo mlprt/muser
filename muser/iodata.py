@@ -9,10 +9,10 @@ Conversion of vector representations of notes and chords to MIDI events.
 """
 
 import numpy as np
-import copy
 import scipy.io.wavfile
-import jack
 import muser.utils
+import jack
+import copy
 import time
 import struct
 import rtmidi
@@ -60,43 +60,55 @@ def init_jack_client(name="MuserClient", inports=0, outports=0,
     return jack_client
 
 
-class JACKAudioCapturer(jack.Client):
-    """JACK client binding a process that captures audio inports.
+class ExtendedClient(jack.Client):
+    """Extended ``jack`` client with audio capture and MIDI event queuing.
 
     Args:
         name (str): Client name.
         inports (int): Number of inports to register and capture from.
     """
 
-    def __init__(self, name='CapturerClient', inports=1):
+    def __init__(self, name='CapturerClient', inports=1, midi_outports=1):
         super().__init__(name=name)
-        _register_ports(self, inports=inports)
+        _register_ports(self, inports=inports, midi_outports=midi_outports)
         self._inport_enum = list(enumerate(self.inports))
-        self.set_process_callback(self._capture)
+        self.set_process_callback(self._process)
         self._captured = [[] for p in self._inport_enum]
+        self._events_queue = []
+
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
 
         self._capture_toggle = False
         self._process_lock = False
-        self._timepoints = []
+        self._capture_timepoints = []
 
     def _handle_xrun(self, delay_usecs):
         self._xruns.append((time.time(), delay_usecs))
 
-    @muser.utils.set_true('_process_lock')
+    def _process(self, frames):
+        self._capture(frames)
+        self._play(frames)
+
     @muser.utils.if_true('_capture_toggle')
+    @muser.utils.set_true('_process_lock')
     def _capture(self, frames):
-        """ The capture process. Runs continuously with activated client. """
+        """The capture process. Runs continuously with activated client."""
         for p, inport in self._inport_enum:
             buffer_ = copy.copy(inport.get_array())
             self._captured[p].append(buffer_)
 
-    @muser.utils.record_timepoints('_timepoints')
+    def _play(self, frames):
+        self.midi_outports[0].clear_buffer()
+        while len(self._events_queue):
+            event = self._events_queue.pop(0)
+            self.midi_outports[0].write_midi_event(*event)
+
+    @muser.utils.record_timepoints('_capture_timepoints')
     @muser.utils.set_true('_capture_toggle')
-    def capture_events(self, events_sequence, send_events, blocks=None,
-                       init_blocks=0):
-        """ Send groups of MIDI events in series and capture the result.
+    def capture_events(self, events_sequence, send_events=None,
+                       blocks=None, init_blocks=0):
+        """Send groups of MIDI events in series and capture the result.
 
         Args:
             events_sequence (List[np.ndarray]):
@@ -113,6 +125,8 @@ class JACKAudioCapturer(jack.Client):
                                  "does not match that of events sequence")
         except TypeError:
             blocks = [blocks] * len(events_sequence)
+        if send_events is None:
+            send_events = self.send_events
         while self.n < init_blocks:
             pass
         for e, events in enumerate(events_sequence):
@@ -127,9 +141,13 @@ class JACKAudioCapturer(jack.Client):
                 while (self.n - n) < blocks[e]:
                     pass
 
+    def send_events(self, events):
+        offsets = [self.frames_since_cycle_start] * len(events)
+        self._events_queue.extend(zip(offsets, events))
+
     @muser.utils.wait_while('_process_lock')
     def drop_captured(self):
-        """ Return and empty the array of captured buffers.
+        """Return and empty the array of captured buffers.
 
         Returns:
             captured (np.ndarray): Previously captured and stored buffer arrays.
@@ -159,6 +177,7 @@ class JACKAudioCapturer(jack.Client):
     def last(self):
         """list: The last group of buffer arrays captured. """
         return [ch[-1] for ch in self._captured]
+
 
 def disable_jack_client(jack_client):
     """Unregister all ports, deactivate, and close a JACK client."""
