@@ -33,7 +33,52 @@ JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
 """Default naming of JACK port types."""
 
 
+class MIDIBuffer(object):
+    """Manages a ``jack`` RingBuffer for thread-safe MIDI event passing.
 
+    Acts like a queue. Write
+
+    Attributes:
+        EVENT_FORMAT (str): Packing format of ``struct`` data for each event.
+        EVENT_SIZE (int): Number of bytes written to the ringbuffer per event.
+
+    Args:
+        size (int): Number of bytes allocated for ringbuffer storage.
+            Rounded by ``jack.RingBuffer`` to the next-highest power of 2.
+    """
+    EVENT_FORMAT = "I3B" # 32-bit uint + 3 * 8-bit uint
+    EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
+
+    def __init__(self, size):
+        self.ringbuffer = jack.RingBuffer(size)
+
+    def write_event(self, offset, event):
+        """Write a MIDI event to the ringbuffer.
+
+        Args:
+            offset (uint32): The frame offset of the event.
+            event (Tuple[uint8]): Bytes specifying a MIDI event.
+        """
+        if len(event) < 3:
+            event += [0] * (3 - len(event))
+        if self.ringbuffer.write_space < self.EVENT_SIZE:
+            raise jack.JackError('Too little RingBuffer space, event discard')
+        data = [offset] + event
+        self.ringbuffer.write(struct.pack(self.EVENT_FORMAT, *data))
+
+    def read_events(self):
+        """Read MIDI events currently stored in the ringbuffer.
+
+        Returns:
+            events_list (List[tuple]): List of retrieved MIDI events.
+        """
+        events_list = []
+        while self.ringbuffer.read_space:
+            data = struct.unpack(self.EVENT_FORMAT,
+                                 self.ringbuffer.read(self.EVENT_SIZE))
+            offset, event = data[0], data[1:]
+            events_list.append((offset, event))
+        return events_list
 
 
 class ExtendedClient(jack.Client):
@@ -51,7 +96,7 @@ class ExtendedClient(jack.Client):
         self._inport_enum = list(enumerate(self.inports))
         self.set_process_callback(self._process)
         self._captured = [[] for p in self._inport_enum]
-        self._events_queue = []
+        self._eventsbuffer = MIDIBuffer(self.blocksize)
 
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
@@ -77,8 +122,8 @@ class ExtendedClient(jack.Client):
 
     def _play(self, frames):
         self.midi_outports[0].clear_buffer()
-        while len(self._events_queue):
-            event = self._events_queue.pop(0)
+        events = self._eventsbuffer.read_events()
+        for event in events:
             self.midi_outports[0].write_midi_event(*event)
 
     @muser.utils.record_timepoints('_capture_timepoints')
@@ -119,8 +164,11 @@ class ExtendedClient(jack.Client):
                     pass
 
     def send_events(self, events):
-        offsets = [self.frames_since_cycle_start] * len(events)
-        self._events_queue.extend(zip(offsets, events))
+        """Write events to the ringbuffer for reading by next process cycle."""
+        offset = self.frames_since_cycle_start
+        for event in events:
+            self._eventsbuffer.write_event(offset, event)
+
 
     @muser.utils.wait_while('_process_lock')
     def drop_captured(self):
