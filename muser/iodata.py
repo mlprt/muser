@@ -33,13 +33,7 @@ JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
 """Default naming of JACK port types."""
 
 
-def init_jack_client(name="MuserClient", inports=0, outports=0,
-                     midi_inports=0, midi_outports=0):
-    """Return an inactive `jack` client with registered ports. """
-    jack_client = jack.Client(name)
-    _register_ports(jack_client, inports=inports, outports=outports,
-                   midi_inports=midi_inports, midi_outports=midi_outports)
-    return jack_client
+
 
 
 class ExtendedClient(jack.Client):
@@ -179,15 +173,26 @@ class ExtendedClient(jack.Client):
             for p in range(n):
                 ports.register(JACK_PORT_NAMES[port_type].format(p))
 
+    @staticmethod
+    def dismantle(jack_client):
+        """Unregister all ports, deactivate, and close a ``jack`` client."""
+        jack_client.outports.clear()
+        jack_client.inports.clear()
+        jack_client.midi_outports.clear()
+        jack_client.midi_inports.clear()
+        jack_client.deactivate()
+        jack_client.close()
 
-def disable_jack_client(jack_client):
-    """Unregister all ports, deactivate, and close a JACK client."""
-    jack_client.outports.clear()
-    jack_client.inports.clear()
-    jack_client.midi_outports.clear()
-    jack_client.midi_inports.clear()
-    jack_client.deactivate()
-    jack_client.close()
+
+def jack_client_with_ports(name="MuserClient", inports=0, outports=0,
+                           midi_inports=0, midi_outports=0):
+    """Return an inactive ``jack`` client with registered ports."""
+    jack_client = jack.Client(name)
+    ExtendedClient.register_ports(jack_client,
+                                  inports=inports, outports=outports,
+                                  midi_inports=midi_inports,
+                                  midi_outports=midi_outports)
+    return jack_client
 
 
 def init_rtmidi_out(name="MuserRtmidiClient", outport=0):

@@ -73,12 +73,12 @@ try:
 
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
-    iodata.disable_jack_client(jack_client)
+    iodata.ExtendedClient.dismantle(jack_client)
     raise
 
 if print_n_xruns:
     print("xruns: {}".format(len(jack_client.xruns)))
-iodata.disable_jack_client(jack_client)
+iodata.ExtendedClient.dismantle(jack_client)
 
 # store audio results
 chord_batches.dump('chord_batches.pickle')
