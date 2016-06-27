@@ -33,24 +33,6 @@ JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
 """Default naming of JACK port types."""
 
 
-def _register_ports(jack_client, **port_args):
-    """Register a JACK client's ports of the given type and number.
-
-    Note:
-        It is the caller's responsibility to properly specify ``**port_args``,
-        and to document them!
-
-    Args:
-        jack_client (jack.Client): The client to register the ports.
-        **port_args: Keywords give port type, args give quantity to register.
-            ``port_args.keys()`` must be a subset of ``JACK_PORT_NAMES.keys()``
-    """
-    for port_type, n in port_args.items():
-        ports = getattr(jack_client, port_type)
-        for p in range(n):
-            ports.register(JACK_PORT_NAMES[port_type].format(p))
-
-
 def init_jack_client(name="MuserClient", inports=0, outports=0,
                      midi_inports=0, midi_outports=0):
     """Return an inactive `jack` client with registered ports. """
@@ -70,7 +52,8 @@ class ExtendedClient(jack.Client):
 
     def __init__(self, name='CapturerClient', inports=1, midi_outports=1):
         super().__init__(name=name)
-        _register_ports(self, inports=inports, midi_outports=midi_outports)
+        ExtendedClient.register_ports(self, inports=inports,
+                                      midi_outports=midi_outports)
         self._inport_enum = list(enumerate(self.inports))
         self.set_process_callback(self._process)
         self._captured = [[] for p in self._inport_enum]
@@ -177,6 +160,24 @@ class ExtendedClient(jack.Client):
     def last(self):
         """list: The last group of buffer arrays captured. """
         return [ch[-1] for ch in self._captured]
+
+    @staticmethod
+    def register_ports(jack_client, **port_args):
+        """Register a JACK client's ports of the given type and number.
+
+        Note:
+            It is the caller's responsibility to properly specify ``**port_args``,
+            and to document them!
+
+        Args:
+            jack_client (jack.Client): The client to register the ports.
+            **port_args: Keywords give port type, args give quantity to register.
+                ``port_args.keys()`` must be a subset of ``JACK_PORT_NAMES.keys()``
+        """
+        for port_type, n in port_args.items():
+            ports = getattr(jack_client, port_type)
+            for p in range(n):
+                ports.register(JACK_PORT_NAMES[port_type].format(p))
 
 
 def disable_jack_client(jack_client):
