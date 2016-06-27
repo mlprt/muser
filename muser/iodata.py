@@ -33,13 +33,14 @@ JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
 """Default naming of JACK port types."""
 
 
-class MIDIBuffer(object):
-    """Manages a ``jack`` RingBuffer for thread-safe MIDI event passing.
+class MIDIEventRingBuffer(object):
+    """Manages a JACK ringbuffer for thread-safe MIDI event passing.
 
-    Acts like a queue. Write
+    Acts like a queue. Writing decreases available write space, reading
+    increases it.
 
     Attributes:
-        EVENT_FORMAT (str): Packing format of ``struct`` data for each event.
+        EVENT_FORMAT (str): The ``struct`` (C) format for each event.
         EVENT_SIZE (int): Number of bytes written to the ringbuffer per event.
 
     Args:
@@ -81,6 +82,49 @@ class MIDIBuffer(object):
         return events_list
 
 
+class AudioRingBuffer(object):
+    """Manages a JACK ringbuffer for thread-safe passing of audio data.
+
+    Attributes:
+        FRAME_FORMAT (str): Defines the C datatype of each JACK audio frame.
+            See ``jack_default_audio_sample_t`` in the JACK C source code.
+            Given as a Python format string with an integer field to be
+            replaced by the number of frames per buffer stored.
+
+    Args:
+        blocksize (int): Number of frames per JACK audio buffer.
+        channels (int): Number of channels to be stored per block.
+        blocks (int): Number of blocks for which to allocate storage.
+            The more the read process lags behind the write process, and the
+            longer the overall capture time, the larger this value should be
+            to avoid losing blocks.
+    """
+    FRAME_FORMAT = "{:d}f"  # floats
+
+    def __init__(self, blocksize, channels, blocks=100):
+        self.buffer_format = FRAME_FORMAT.format(blocksize)
+        self.buffer_size = struct.calcsize(self.buffer_format)
+        self.ringbuffer = jack.RingBuffer(blocks * channels * self.block_size)
+        self.channels = channels
+
+    def write_buffer(self, buffers):
+        """Write buffers for a single block to the ringbuffer.
+
+        Args:
+            buffers (List[buffer]): JACK CFFI buffers from audio ports.
+                Should have length equal to the number of channels per block.
+        """
+        pass
+
+    def read_block(self):
+        """Read a single block's buffers from the ringbuffer.
+
+        Returns:
+            buffers (List[buffer]): JACK CFFI buffers for a single audio block.
+        """
+        return
+
+
 class ExtendedClient(jack.Client):
     """Extended ``jack`` client with audio capture and MIDI event queuing.
 
@@ -96,7 +140,7 @@ class ExtendedClient(jack.Client):
         self._inport_enum = list(enumerate(self.inports))
         self.set_process_callback(self._process)
         self._captured = [[] for p in self._inport_enum]
-        self._eventsbuffer = MIDIBuffer(self.blocksize)
+        self._eventsbuffer = MIDIEventRingBuffer(self.blocksize)
 
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
