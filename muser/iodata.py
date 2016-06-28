@@ -33,7 +33,7 @@ JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
 """Default naming of JACK port types."""
 
 
-class MIDIEventRingBuffer(object):
+class MIDIRingBuffer(object):
     """Manages a JACK ringbuffer for thread-safe MIDI event passing.
 
     Acts like a queue. Writing decreases available write space, reading
@@ -91,6 +91,11 @@ class AudioRingBuffer(object):
             Given as a Python format string with an integer field to be
             replaced by the number of frames per buffer stored.
 
+    Note:
+        With 1024 samples/block and 44100 samples/s, 2 channels, and samples
+        stored as C floats (4 bytes), an hour of audio is approximately
+        155,000 samples or 1.27 GB, and 1 min is ~21 MB.
+
     Args:
         blocksize (int): Number of frames per JACK audio buffer.
         channels (int): Number of channels to be stored per block.
@@ -101,20 +106,24 @@ class AudioRingBuffer(object):
     """
     FRAME_FORMAT = "{:d}f"  # floats
 
-    def __init__(self, blocksize, channels, blocks=100):
-        self.buffer_format = FRAME_FORMAT.format(blocksize)
-        self.buffer_size = struct.calcsize(self.buffer_format)
-        self.ringbuffer = jack.RingBuffer(blocks * channels * self.block_size)
+    def __init__(self, blocksize, channels, blocks=10000):
+        self.buffers_format = channels * self.FRAME_FORMAT.format(blocksize)
+        self.buffers_size = struct.calcsize(self.buffers_format)
+        self.ringbuffer = jack.RingBuffer(blocks * self.buffers_size)
         self.channels = channels
 
-    def write_buffer(self, buffers):
+    def write_block(self, buffers):
         """Write buffers for a single block to the ringbuffer.
 
         Args:
             buffers (List[buffer]): JACK CFFI buffers from audio ports.
                 Should have length equal to the number of channels per block.
         """
-        pass
+        if not len(buffers) == self.channels:
+            raise ValueError("Number of buffers passed for block write not "
+                             "equal to number of ringbuffer channels")
+        data = b''.join(bytes(buffer_) for buffer_ in buffers)
+        self.ringbuffer.write(data)
 
     def read_block(self):
         """Read a single block's buffers from the ringbuffer.
@@ -122,7 +131,13 @@ class AudioRingBuffer(object):
         Returns:
             buffers (List[buffer]): JACK CFFI buffers for a single audio block.
         """
-        return
+        buffers = self.ringbuffer.read(self.buffers_size)
+        return buffers
+
+    @property
+    def n(self):
+        """int: Number of blocks stored in ringbuffer."""
+        return self.ringbuffer.read_space // self.buffers_size
 
 
 class ExtendedClient(jack.Client):
@@ -131,22 +146,28 @@ class ExtendedClient(jack.Client):
     Args:
         name (str): Client name.
         inports (int): Number of inports to register and capture from.
+        midi_outports (int): Number of MIDI outports to register.
+        ringbuffer_time (float): Minutes of audio to allocate for ringbuffer.
     """
 
-    def __init__(self, name='CapturerClient', inports=1, midi_outports=1):
+    def __init__(self, name='CapturerClient', inports=1, midi_outports=1,
+                 ringbuffer_time=10):
         super().__init__(name=name)
         ExtendedClient.register_ports(self, inports=inports,
                                       midi_outports=midi_outports)
         self._inport_enum = list(enumerate(self.inports))
         self.set_process_callback(self._process)
         self._captured = [[] for p in self._inport_enum]
-        self._eventsbuffer = MIDIEventRingBuffer(self.blocksize)
+        self._eventsbuffer = MIDIRingBuffer(self.blocksize)
+        blocks = int((10 * 60) / (self.blocksize / self.samplerate))
+        self._audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
+                                            blocks=blocks)
 
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
 
-        self._capture_toggle = False
         self._process_lock = False
+        self._capture_toggle = False
         self._capture_timepoints = []
 
     def _handle_xrun(self, delay_usecs):
@@ -160,9 +181,8 @@ class ExtendedClient(jack.Client):
     @muser.utils.set_true('_process_lock')
     def _capture(self, frames):
         """The capture process. Runs continuously with activated client."""
-        for p, inport in self._inport_enum:
-            buffer_ = copy.copy(inport.get_array())
-            self._captured[p].append(buffer_)
+        buffers = [port[1].get_buffer() for port in self._inport_enum]
+        self._audiobuffer.write_block(buffers)
 
     def _play(self, frames):
         self.midi_outports[0].clear_buffer()
@@ -193,10 +213,10 @@ class ExtendedClient(jack.Client):
             blocks = [blocks] * len(events_sequence)
         if send_events is None:
             send_events = self.send_events
-        while self.n < init_blocks:
+        while self._audiobuffer.n < init_blocks:
             pass
         for e, events in enumerate(events_sequence):
-            n = self.n
+            n = self._audiobuffer.n
             send_events(events)
             if blocks[e] is None:
                 while not any(self.last[0]):
@@ -204,7 +224,7 @@ class ExtendedClient(jack.Client):
                 while any(self.last[0]):
                     pass
             else:
-                while (self.n - n) < blocks[e]:
+                while (self._audiobuffer.n - n) < blocks[e]:
                     pass
 
     def send_events(self, events):
@@ -213,16 +233,20 @@ class ExtendedClient(jack.Client):
         for event in events:
             self._eventsbuffer.write_event(offset, event)
 
-
-    @muser.utils.wait_while('_process_lock')
     def drop_captured(self):
         """Return and empty the array of captured buffers.
 
         Returns:
             captured (np.ndarray): Previously captured and stored buffer arrays.
         """
-        captured = np.concatenate([self._captured])
-        self._captured = [[] for p in self._inport_enum]
+        captured = [[] for i in self.inports]
+        data_format = self._audiobuffer.buffers_format
+        bs = self.blocksize
+        while self._audiobuffer.ringbuffer.read_space:
+            data = struct.unpack(data_format, self._audiobuffer.read_block())
+            for i in range(len(self.inports)):
+                captured[i].append(data[i*bs:(i+1)*bs])
+        captured = np.array(captured, dtype=np.float32)
         return captured
 
     @property
@@ -234,12 +258,6 @@ class ExtendedClient(jack.Client):
     def xruns(self):
         """np.ndarray: Array of logged xrun times. """
         return np.array(self._xruns)
-
-    @property
-    @muser.utils.wait_while('_process_lock')
-    def n(self):
-        """int: The number of blocks captured per inport so far."""
-        return len(self._captured[0])
 
     @property
     @muser.utils.wait_while('_process_lock')
