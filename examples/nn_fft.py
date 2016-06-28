@@ -67,8 +67,9 @@ try:
             notes_on = iodata.vector_to_midi_events('ON', pitch_vector,
                                                     velocity=100)
             notes_off = iodata.vector_to_midi_events('OFF', pitch_vector)
-            events = [notes_on, notes_off]
-            jack_client.capture_events(events, blocks=(50, 25), init_blocks=25)
+            events_sequence = [notes_on, notes_off]
+            jack_client.capture_events(events_sequence, blocks=(250, 25),
+                                       init_blocks=25)
             chord['captured_buffers'] = jack_client.drop_captured()
 
 except (KeyboardInterrupt, SystemExit):

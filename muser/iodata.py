@@ -240,6 +240,7 @@ class ExtendedClient(jack.Client):
                                  "does not match that of events sequence")
         except TypeError:
             blocks = [blocks] * len(events_sequence)
+        events_sequence = [events.tolist() for events in events_sequence]
         if send_events is None:
             send_events = self.send_events
 
@@ -248,7 +249,6 @@ class ExtendedClient(jack.Client):
         for e, events in enumerate(events_sequence):
             send_events(events)
             if blocks[e] is None:
-                # wait for silence (past initial silence)
                 amp_max = 0
                 amp_thres = 0
                 while True:
