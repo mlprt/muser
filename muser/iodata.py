@@ -12,7 +12,6 @@ import numpy as np
 import scipy.io.wavfile
 import muser.utils
 import jack
-import copy
 import time
 import struct
 import rtmidi
@@ -36,8 +35,7 @@ JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
 class MIDIRingBuffer(object):
     """Manages a JACK ringbuffer for thread-safe MIDI event passing.
 
-    Acts like a queue. Writing decreases available write space, reading
-    increases it.
+    Writing to a ringbuffer decreases available write space; reading increases.
 
     Attributes:
         EVENT_FORMAT (str): The ``struct`` (C) format for each event.
@@ -104,14 +102,15 @@ class AudioRingBuffer(object):
             longer the overall capture time, the larger this value should be
             to avoid losing blocks.
     """
-    FRAME_FORMAT = "{:d}f"  # floats
-    FRAME_SIZE = struct.calcsize("f")
+    FRAME_FORMAT = "f"  # floats
+    FRAME_BYTES = struct.calcsize(FRAME_FORMAT)
+    BUFFER_FORMAT = "{:d}" + FRAME_FORMAT
 
     def __init__(self, blocksize, channels, blocks=10000):
-        self.buffers_format = channels * self.FRAME_FORMAT.format(blocksize)
-        self.buffers_size = struct.calcsize(self.buffers_format)
-        self._ringbuffer = jack.RingBuffer(blocks * self.buffers_size)
-        self._last = jack.RingBuffer(self.buffers_size + 1)
+        self.block_format = channels * self.BUFFER_FORMAT.format(blocksize)
+        self.block_bytes = struct.calcsize(self.block_format)
+        self._ringbuffer = jack.RingBuffer(blocks * self.block_bytes)
+        self._last = jack.RingBuffer(self.block_bytes + 1)
         self.channels = channels
 
     def write_block(self, buffers):
@@ -125,7 +124,7 @@ class AudioRingBuffer(object):
             raise ValueError("Number of buffers passed for block write not "
                              "equal to number of ringbuffer channels")
         data = b''.join(bytes(buffer_) for buffer_ in buffers)
-        self._last.read(self.buffers_size)
+        self._last.read_advance(self.block_bytes)
         self._last.write(data)
         self._ringbuffer.write(data)
 
@@ -135,24 +134,30 @@ class AudioRingBuffer(object):
         Returns:
             buffers (List[buffer]): JACK CFFI buffers for a single audio block.
         """
-        buffers = self._ringbuffer.read(self.buffers_size)
+        buffers = self._ringbuffer.read(self.block_bytes)
         return buffers
 
     @property
     def last(self):
-        """buffer: All channels of last stored block."""
+        """buffer: Copy of all channels of last stored block."""
         while not self._last.read_space:
             pass
-        return self._last.peek(self.buffers_size)
+        return self._last.peek(self.block_bytes)
 
     @property
     def n(self):
         """int: Number of blocks stored in ringbuffer."""
-        return self._ringbuffer.read_space // self.buffers_size
+        return self._ringbuffer.read_space // self.block_bytes
 
 
 class ExtendedClient(jack.Client):
     """Extended ``jack`` client with audio capture and MIDI event queuing.
+
+    Note:
+        Number of bytes allocated for the MIDIRingBuffer does not need to equal
+        number of frames in a JACK block, but assigned as such because at twice
+        the blocksize (same samplerate), expect to send twice as many events
+        per block.
 
     Args:
         name (str): Client name.
@@ -184,7 +189,7 @@ class ExtendedClient(jack.Client):
 
     def _process(self, frames):
         self._capture(frames)
-        self._play(frames)
+        self._midi_write(frames)
 
     @muser.utils.if_true('_capture_toggle')
     def _capture(self, frames):
@@ -192,7 +197,7 @@ class ExtendedClient(jack.Client):
         buffers = [port[1].get_buffer() for port in self._inport_enum]
         self._audiobuffer.write_block(buffers)
 
-    def _play(self, frames):
+    def _midi_write(self, frames):
         self.midi_outports[0].clear_buffer()
         for event in self._eventsbuffer.read_events():
             self.midi_outports[0].write_midi_event(*event)
@@ -210,8 +215,8 @@ class ExtendedClient(jack.Client):
                        amp_testrate=25, amp_rel_thres=1e-4):
         """Send groups of MIDI events in series and capture the result.
 
-        TODO: Times (based on self.blocksize and self.samplerate) instead of
-            blocks
+        TODO: Times (based on self.blocksize and self.samplerate) instead of/
+            in addition to block option
 
         Args:
             events_sequence (List[np.ndarray]): Groups of MIDI events to send.
@@ -273,7 +278,7 @@ class ExtendedClient(jack.Client):
             captured (np.ndarray): Previously captured and stored buffer arrays.
         """
         captured = [[] for i in self.inports]
-        data_format = self._audiobuffer.buffers_format
+        data_format = self._audiobuffer.block_format
         bs = self.blocksize
         while self._audiobuffer.n:
             data = struct.unpack(data_format, self._audiobuffer.read_block())
