@@ -45,8 +45,8 @@ class MIDIRingBuffer(object):
         size (int): Number of bytes allocated for ringbuffer storage.
             Rounded by ``jack.RingBuffer`` to the next-highest power of 2.
     """
-    EVENT_FORMAT = "I3B" # 32-bit uint + 3 * 8-bit uint
-    EVENT_SIZE = struct.calcsize(EVENT_FORMAT)
+    EVENT_HEADER_FORMAT = "IB"
+    EVENT_HEADER_SIZE = struct.calcsize(EVENT_HEADER_FORMAT)
 
     def __init__(self, size):
         self.ringbuffer = jack.RingBuffer(size)
@@ -58,25 +58,29 @@ class MIDIRingBuffer(object):
             offset (uint32): The frame offset of the event.
             event (Tuple[uint8]): Bytes specifying a MIDI event.
         """
-        if len(event) < 3:
-            event += (0,) * (3 - len(event))
-        if self.ringbuffer.write_space < self.EVENT_SIZE:
+        n_bytes_event = len(event)
+        n_bytes_write = self.EVENT_HEADER_SIZE + n_bytes_event
+        self.ringbuffer.write(struct.pack(self.EVENT_HEADER_FORMAT, offset,
+                                          n_bytes_event))
+        if self.ringbuffer.write_space < n_bytes_write:
             raise jack.JackError('Low ringbuffer space, discarded event')
-        self.ringbuffer.write(struct.pack(self.EVENT_FORMAT, offset, *event))
+        self.ringbuffer.write(event)
 
     def read_events(self):
         """Read MIDI events currently stored in the ringbuffer.
 
         Returns:
-            events_list (List[tuple]): List of retrieved MIDI events.
+            events (List[tuple]): List of retrieved MIDI offset/event pairs.
         """
-        events_list = []
+        events = []
         while self.ringbuffer.read_space:
-            data = struct.unpack(self.EVENT_FORMAT,
-                                 self.ringbuffer.read(self.EVENT_SIZE))
-            offset, event = data[0], data[1:]
-            events_list.append((offset, event))
-        return events_list
+            header = self.ringbuffer.read(self.EVENT_HEADER_SIZE)
+            offset, n_bytes_event = struct.unpack(self.EVENT_HEADER_FORMAT,
+                                                  header)
+            data = self.ringbuffer.read(n_bytes_event)
+            event = struct.unpack("{}B".format(n_bytes_event), data)
+            events.append((offset, event))
+        return events
 
 
 class AudioRingBuffer(object):
