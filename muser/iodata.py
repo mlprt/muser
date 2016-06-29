@@ -59,11 +59,10 @@ class MIDIRingBuffer(object):
             event (Tuple[uint8]): Bytes specifying a MIDI event.
         """
         if len(event) < 3:
-            event += [0] * (3 - len(event))
+            event += (0,) * (3 - len(event))
         if self.ringbuffer.write_space < self.EVENT_SIZE:
-            raise jack.JackError('Too little RingBuffer space, event discard')
-        data = [offset] + event
-        self.ringbuffer.write(struct.pack(self.EVENT_FORMAT, *data))
+            raise jack.JackError('Low ringbuffer space, discarded event')
+        self.ringbuffer.write(struct.pack(self.EVENT_FORMAT, offset, *event))
 
     def read_events(self):
         """Read MIDI events currently stored in the ringbuffer.
@@ -222,7 +221,7 @@ class ExtendedClient(jack.Client):
             events_sequence (List[np.ndarray]): Groups of MIDI events to send.
                 After each group is sent, a condition is awaited before sending
                 the next, or stopping audio capture.
-            send_events (function): Accepts an iterable of MIDI events, and
+            send_events (function): Accepts an iterable of MIDI events and
                 sends them to the synthesizer.
             blocks (list): Number of JACK blocks to record for each set of
                 events. Wherever ``None``, records the set of events until
@@ -272,18 +271,19 @@ class ExtendedClient(jack.Client):
                     pass
 
     def drop_captured(self):
-        """Return and empty the array of captured buffers.
+        """Return the audio data captured in the ringbuffer.
 
         Returns:
-            captured (np.ndarray): Previously captured and stored buffer arrays.
+            captured (np.ndarray):
         """
         captured = [[] for i in self.inports]
         data_format = self._audiobuffer.block_format
         bs = self.blocksize
         while self._audiobuffer.n:
             data = struct.unpack(data_format, self._audiobuffer.read_block())
-            for i in range(len(self.inports)):
-                captured[i].append(data[i*bs:(i+1)*bs])
+            for n, channel in enumerate(captured):
+                ch_i, ch_f = n * bs, (n + 1) * bs
+                channel.append(data[ch_i:ch_f])
         captured = np.array(captured, dtype=np.float32)
         return captured
 
