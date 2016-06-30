@@ -6,12 +6,13 @@ Only accounts for note on and off events and tempo changes.
 import midi
 import time
 import muser.iodata as iodata
+import numpy as np
 
 synth_midi_in = 'Pianoteq55:midi_in'
 
 midi_file = '/home/mll/data/midi/goldberg-aria.mid'
 midi_pattern = midi.read_midifile(midi_file)
-resol = midi_pattern.resolution
+ticks_per_beat = midi_pattern.resolution
 
 # flatten tracks
 midi_pattern.make_ticks_abs()
@@ -21,8 +22,22 @@ for track in midi_pattern:
         events.append(event)
 
 bias_beats = True
-velocity_biases = {(4, 4): (1.0, 0.9, 0.95, 0.875),
-                   (3, 4): (1.0, 0.8, 0.9)}
+beat_biases = {(4, 4): (1.0, 0.9, 0.95, 0.875),
+               (3, 4): (1.0, 0.8, 0.9)}
+def beat_bias(beat_float, timesig):
+    """Returns a bias depending on relative position in a measure.
+
+    Currently uses linear interpolation between values in ``beat_biases``.
+
+    Args:
+        beat_float (float): Relative position in the measure.
+            Refers to beats using indices, so a value of 0.5 refers to the
+            position halfway between the first and second beats in the measure.
+        timesig (Tuple[int]): The time signature of the measure.
+            For example, ``(4, 4)`` corresponds to the time signature 4/4.
+    """
+    beats = range(timesig[0])
+    return np.interp(beat_float, beats, beat_biases[timesig])
 
 timesig = {}
 tempo = {}
@@ -32,8 +47,8 @@ events_sequence = {}
 for event in events:
     if event.name == 'Time Signature':
         timesig[event.tick] = (event.numerator, event.denominator)
-        ticks_per_measure = resol * event.numerator
-        beat_biases = velocity_biases[timesig[event.tick]]
+        timesig_ = timesig[event.tick]
+        ticks_per_measure = ticks_per_beat * event.numerator
     elif event.name == 'Set Tempo':
         tempo[event.tick] = event.bpm
     # elif control change
@@ -41,7 +56,8 @@ for event in events:
     elif event.name == 'Note On':
         note = [iodata.NOTE_ON, event.pitch, event.velocity]
         if bias_beats:
-            note[2] *= beat_biases[(event.tick % ticks_per_measure) // resol]
+            note[2] *= beat_bias((event.tick % ticks_per_measure) / ticks_per_beat,
+                                 timesig_)
             note[2] = int(note[2])
         if event.tick in events_sequence:
             events_sequence[event.tick].append(note)
