@@ -48,16 +48,16 @@ def if_true(toggle_attr):
     return if_true_decorator
 
 
-def record_timepoints(timepoints_list_attr):
-    """Returns a decorator that records function entry and return times."""
-    def record_timepoints_decorator(instance_method):
-        """Append decorated function's entry and return times to attribute."""
+def record_with_timepoints(timepoints_list_attr):
+    """Returns a decorator that records entry and return times."""
+    def record_with_timepoints_decorator(instance_method):
+        """Append return value and entry and return times to attribute."""
         @functools.wraps(instance_method)
         def wrapper(self, *args, **kwargs):
             start = time.time()
             output = instance_method(self, *args, **kwargs)
             stop = time.time()
-            getattr(self, timepoints_list_attr).append((start, stop))
+            getattr(self, timepoints_list_attr).append((output, (start, stop)))
             return output
 
         return wrapper
@@ -68,9 +68,6 @@ def get_peaks(y, x, thres):
     """Return the peaks in data that exceed a relative threshold."""
     try:
         peaks_idx = [peakutils.indexes(ch, thres=thres) for ch in y]
-        # TODO: could convert to numpy (constant size) if assign peaks
-        #       to harmonic object containing all notes
-        #       (could also be used for training)
         peaks = [(x[idx], y[i][idx]) for i, idx in enumerate(peaks_idx)]
     except TypeError:  # amp not iterable
         return get_peaks([y], x, thres=thres)

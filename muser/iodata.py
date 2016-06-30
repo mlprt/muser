@@ -14,6 +14,7 @@ import muser.utils
 import jack
 import time
 import struct
+import copy
 import rtmidi
 
 SND_DTYPES = {'int16': 16, np.int16: 16, 'int32': 32, np.int32: 32}
@@ -185,14 +186,12 @@ class ExtendedClient(jack.Client):
         self._audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
                                             blocks=blocks)
         self._max_offset = self.blocksize - 1
-
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
         self._n_capture_xruns = 0
         self._max_capture_xruns = None
-
         self._capture_toggle = False
-        self._capture_timepoints = []
+        self._captured_sequences = []
 
     def _handle_xrun(self, delay_usecs):
         # does not need to be suitable for real-time execution
@@ -308,6 +307,7 @@ class ExtendedClient(jack.Client):
                 n = self._audiobuffer.n
                 while (self._audiobuffer.n - n) < blocks[e]:
                     pass
+        return events_sequence
 
     def drop_captured(self):
         """Return the audio data captured in the ringbuffer.
@@ -327,9 +327,14 @@ class ExtendedClient(jack.Client):
         return captured
 
     @property
+    def captured_sequences(self):
+        """list: Captured event sequences and their timepoints."""
+        return copy.deepcopy(self._captured_sequences)
+
+    @property
     def timepoints(self):
-        """np.ndarray: Array of capture start and stop timepoints."""
-        return np.array(self._timepoints)
+        """np.ndarray: Start and stop timepoints of event sequence captures."""
+        return np.array([s[1] for s in self._captured_sequences])
 
     @property
     def xruns(self):
