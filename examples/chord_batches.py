@@ -10,6 +10,7 @@ import muser.sequencer as sequencer
 import muser.utils as utils
 import scipy.io.wavfile
 import os
+import time
 
 # User and synth parameters
 data_dir = '/tmp/muser/'
@@ -18,10 +19,10 @@ synth_outports = ["Pianoteq55:out_1", "Pianoteq55:out_2"]
 synth_midi_in = "Pianoteq55:midi_in"
 
 # Batch generation parameters
-chord_size = 5
+chord_size = 10
 batch_size = 2
 batches = 1
-print_n_xruns = True
+print_details = True
 
 # data structure
 chord_dtype = np.dtype([('velocity_vector', np.uint8, iodata.N_PITCHES),
@@ -46,6 +47,7 @@ try:
         port_pair[1].disconnect()
         jack_client.connect(*port_pair)
 
+    start_time = time.time()
     for batch in chord_batches:
         for chord in batch:
             velocity_vector = chord['velocity_vector']
@@ -57,13 +59,22 @@ try:
                                        init_blocks=25)
             chord['captured_buffers'] = jack_client.drop_captured()
 
+    if print_details:
+        print("\n{} Xruns".format(jack_client.n_xruns))
+        for xrun in (jack_client.xruns - start_time):
+            print('{:.4f} s'.format(xrun[0]))
+        print("\nCapture timepoints")
+        print('{:>10}  \t{:>10}'.format('Start', 'Stop'))
+        for item in jack_client.captured_sequences:
+            times = np.array(item[1]) - start_time
+            xrun = " (Xrun)" if item[0] is None else ''
+            print("{:10.4f} s\t{:10.4f} s {}".format(*times, xrun))
+
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
     iodata.ExtendedClient.dismantle(jack_client)
     raise
 
-if print_n_xruns:
-    print("xruns: {}".format(len(jack_client.xruns)))
 iodata.ExtendedClient.dismantle(jack_client)
 
 # store chord batches
