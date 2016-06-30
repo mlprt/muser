@@ -467,7 +467,7 @@ def unit_snd(snd, factor=None):
     return scaled
 
 
-def wav_read_unit(wavfile_name):
+def wav_read_norm(wavfile_name):
     """ Return contents of .wav as array scaled from -1 to 1.
 
     Args:
