@@ -1,101 +1,26 @@
 """ Learn to predict notes from FFT data.
 
-Send notes to MIDI synthesizer, then calculate FFT for resulting audio. FFT
-becomes input for neural network, while the known notes that produced it become
-training outputs.
-
 Starting with input FFT length equal to JACK buffer size, the output vector has
 length 88 corresponding to all notes on a standard piano. Start with one hidden
 layer, which by heuristic should have between 88 and 512 neurons.
 
-Each note played will produce many JACK buffers worth of audio data. FFT will
-vary over the duration of the note, which can be minimized by disabling certain
-synthesizer features. Will initially record isolated notes/chords and take the
-FFTs at maximum/average amplitude as inputs. As more complex examples are
-investigated, will need to isolate harmonic features.
-
-Temporarily using ``rtmidi`` to send notes to the synthesizer, as it is simpler
-to time without involving ``jack`` threading and buffer offsets.
+FFT will vary over the duration of the note, which can be minimized by disabling
+certain synthesizer features. Will initially record isolated notes/chords and
+take the FFTs at maximum/average amplitude as inputs. As more complex examples
+are investigated, will need to isolate harmonic features.
 """
 
-import numpy as np
 import tensorflow as tf
-import muser.iodata as iodata
-import muser.sequencer as sequencer
-import muser.utils as utils
-import scipy.io.wavfile
+import numpy as np
 
-# Synthesizer MIDI ports
-synth_outports = ["Pianoteq55:out_1", "Pianoteq55:out_2"]
-synth_midi_in = "Pianoteq55:midi_in"
+data_file = '/tmp/muser/chord_batches/chord_batches.pickle'
+chord_batches = np.load(data_file)
 
-channels = len(synth_outports)
-
-# JACK capture client initialization
-jack_client = iodata.ExtendedClient(inports=channels, midi_outports=1)
-samplerate = jack_client.samplerate
-print_n_xruns = True
-
-# Training parameters
-chord_size = 1
-batch_size = 2
-batches = 1
-learning_rate = 0.001
-
-# storage of results
-# TODO: velocity vectors
-chord_dtype = np.dtype([('pitch_vector', np.uint8, iodata.N_PITCHES),
-                        ('captured_buffers', object)])
-chord_batches = np.ndarray([batches, batch_size], dtype=chord_dtype)
-
-# generate note batches
-chord_batches['pitch_vector'] = utils.get_batches(sequencer.random_pitch_vector,
-                                                  batches, batch_size,
-                                                  [chord_size])
-
-jack_client.activate()
-try:
-    # connect MIDI and audio ports of synthesizer and JACK client
-    jack_client.connect(jack_client.midi_outports[0], synth_midi_in)
-    for port_pair in zip(synth_outports, jack_client.inports):
-        port_pair[1].disconnect()
-        jack_client.connect(*port_pair)
-
-    for batch in chord_batches:
-        for chord in batch:
-            pitch_vector = chord['pitch_vector']
-            notes_on = iodata.vector_to_midi_events('ON', pitch_vector,
-                                                    velocity=100)
-            notes_off = iodata.vector_to_midi_events('OFF', pitch_vector)
-            events_sequence = [notes_on, notes_off]
-            jack_client.capture_events(events_sequence, blocks=(250, 25),
-                                       init_blocks=25)
-            chord['captured_buffers'] = jack_client.drop_captured()
-
-except (KeyboardInterrupt, SystemExit):
-    print('\nUser or system interrupt, dismantling JACK clients!')
-    iodata.ExtendedClient.dismantle(jack_client)
-    raise
-
-if print_n_xruns:
-    print("xruns: {}".format(len(jack_client.xruns)))
-iodata.ExtendedClient.dismantle(jack_client)
-
-# store audio results
-chord_batches.dump('chord_batches.pickle')
-
-for b, batch in enumerate(chord_batches):
-    for c, chord in enumerate(batch):
-        snd = iodata.buffers_to_snd(chord['captured_buffers'])
-        wavfile_name = 'batch{}_chord{}.wav'.format(b, c)
-        scipy.io.wavfile.write(wavfile_name, samplerate, snd)
-
-quit()
-
-# Neural network parameters
+# Parameters
 inputs = chord_batches.shape[2]
 hidden1_n = 300
 outputs = 88
+learning_rate = 0.001
 
 # Input placeholder variables
 x = tf.placeholder(tf.float32, shape=[None, inputs])
