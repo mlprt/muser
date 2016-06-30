@@ -154,10 +154,6 @@ class AudioRingBuffer(object):
         return self._ringbuffer.read_space // self.block_bytes
 
 
-class XrunError(Exception):
-    pass
-
-
 class ExtendedClient(jack.Client):
     """Extended ``jack`` client with audio capture and MIDI event queuing.
 
@@ -182,25 +178,13 @@ class ExtendedClient(jack.Client):
         self._inport_enum = list(enumerate(self.inports))
         self.set_process_callback(self._process)
         self._eventsbuffer = MIDIRingBuffer(self.blocksize)
-        blocks = int((ringbuffer_time * 60) / (self.blocksize / self.samplerate))
+        audiobuffer_blocks = int(60 * ringbuffer_time / self.blocktime)
         self._audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
-                                            blocks=blocks)
-        self._max_offset = self.blocksize - 1
+                                            blocks=audiobuffer_blocks)
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
-        self._n_capture_xruns = 0
-        self._max_capture_xruns = None
         self._capture_toggle = False
         self._captured_sequences = []
-
-    def _handle_xrun(self, delay_usecs):
-        # does not need to be suitable for real-time execution
-        self._xruns.append((time.time(), delay_usecs))
-        if self._capture_toggle and self._max_capture_xruns is not None:
-            print('xrun at: ', self._xruns[-1][0])
-            self._n_capture_xruns += 1
-            if self._n_capture_xruns > self._max_capture_xruns:
-                raise XrunError('Number of logged xruns exceeds given limit')
 
     def _process(self, frames):
         self._capture(frames)
@@ -216,6 +200,10 @@ class ExtendedClient(jack.Client):
         self.midi_outports[0].clear_buffer()
         for event in self._eventsbuffer.read_events():
             self.midi_outports[0].write_midi_event(*event)
+
+    def _handle_xrun(self, delay_usecs):
+        # does not need to be suitable for real-time execution
+        self._xruns.append((time.time(), delay_usecs))
 
     def send_events(self, events):
         """Write events to the ringbuffer for reading by next process cycle.
@@ -267,36 +255,36 @@ class ExtendedClient(jack.Client):
         events_sequence = [events.tolist() for events in events_sequence]
         if send_events is None:
             send_events = self.send_events
-        self._max_capture_xruns = max_xruns
+        capture_args = (events_sequence, send_events, blocks, init_blocks,
+                        1.0 / amp_testrate, amp_rel_thres, max_xruns)
 
-        for attempt in range(attempts):
-            try:
-                self._n_capture_xruns = 0
-                self._capture_loop(events_sequence, send_events, blocks,
-                                   init_blocks, amp_testrate, amp_rel_thres)
-            except XrunError:
-                if attempt == (attempts - 1):
-                    raise
-                print("Re-trying capture")
-                # TODO: silence synth
-                pass
+        for a in range(attempts):
+            attempt = self._capture_loop(*capture_args)
+            if attempt is None:
+                #time.sleep(0.01)
+                continue
+            else:
+                return
 
-    @muser.utils.record_timepoints('_capture_timepoints')
+    @muser.utils.record_with_timepoints('_captured_sequences')
     @muser.utils.set_true('_capture_toggle')
     def _capture_loop(self, events_sequence, send_events, blocks, init_blocks,
-                      amp_testrate, amp_rel_thres):
+                      amp_testperiod, amp_rel_thres, max_xruns):
+        init_xruns = self.n_xruns
         while self._audiobuffer.n < init_blocks:
             pass
         for e, events in enumerate(events_sequence):
             send_events(events)
             if blocks[e] is None:
+                # wait for amplitude to fall below threshold
                 amp_max = 0
                 amp_thres = 0
-                test_period = 1. / amp_testrate
                 while True:
-                    time.sleep(test_period)
+                    time.sleep(amp_testperiod)
+                    if (self.n_xruns - init_xruns) > max_xruns:
+                        return
                     last = struct.unpack(self._audiobuffer.buffers_format,
-                                            self._audiobuffer.last)
+                                         self._audiobuffer.last)
                     last_max = max(last)
                     if last_max > amp_max:
                         amp_max = last_max
@@ -307,6 +295,8 @@ class ExtendedClient(jack.Client):
                 n = self._audiobuffer.n
                 while (self._audiobuffer.n - n) < blocks[e]:
                     pass
+                    if (self.n_xruns - init_xruns) > max_xruns:
+                        return
         return events_sequence
 
     def drop_captured(self):
@@ -332,7 +322,7 @@ class ExtendedClient(jack.Client):
         return copy.deepcopy(self._captured_sequences)
 
     @property
-    def timepoints(self):
+    def capture_timepoints(self):
         """np.ndarray: Start and stop timepoints of event sequence captures."""
         return np.array([s[1] for s in self._captured_sequences])
 
@@ -345,6 +335,16 @@ class ExtendedClient(jack.Client):
     def n_xruns(self):
         """int: Number of xruns logged by the client."""
         return len(self._xruns)
+
+    @property
+    def max_offset(self):
+        """int: The largest offset for a buffer frame."""
+        return (self.blocksize - 1)
+
+    @property
+    def blocktime(self):
+        """float: The number of seconds in one JACK buffer."""
+        return (self.blocksize / self.samplerate)
 
     @staticmethod
     def register_ports(jack_client, **port_args):
@@ -485,7 +485,7 @@ def to_sample_index(time, sample_rate):
     return sample_index
 
 
-def unit_snd(snd, factor=None):
+def snd_norm(snd, factor=None):
     """ Scale elements of an array of (.wav) data from -1 to 1.
 
     Default factor is determined from ``snd.dtype``, corresponding to the
@@ -517,7 +517,7 @@ def wav_read_norm(wavfile_name):
         snd (np.ndarray): The file's audio samples as ``float``.
     """
     sample_rate, snd = scipy.io.wavfile.read(wavfile_name)
-    snd = unit_snd(snd)
+    snd = snd_norm(snd)
     return sample_rate, snd
 
 

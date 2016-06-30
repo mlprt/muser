@@ -61,7 +61,7 @@ def record_with_timepoints(timepoints_list_attr):
             return output
 
         return wrapper
-    return record_timepoints_decorator
+    return record_with_timepoints_decorator
 
 
 def get_peaks(y, x, thres):
