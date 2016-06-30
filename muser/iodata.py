@@ -60,11 +60,11 @@ class MIDIRingBuffer(object):
         """
         n_bytes_event = len(event)
         n_bytes_write = self.EVENT_HEADER_SIZE + n_bytes_event
-        self.ringbuffer.write(struct.pack(self.EVENT_HEADER_FORMAT, offset,
-                                          n_bytes_event))
+        write_format = self.EVENT_HEADER_FORMAT + '{}B'.format(n_bytes_event)
         if self.ringbuffer.write_space < n_bytes_write:
             raise jack.JackError('Low ringbuffer space, discarded event')
-        self.ringbuffer.write(event)
+        write_data = struct.pack(write_format, offset, n_bytes_event, *event)
+        self.ringbuffer.write(write_data)
 
     def read_events(self):
         """Read MIDI events currently stored in the ringbuffer.
@@ -77,8 +77,8 @@ class MIDIRingBuffer(object):
             header = self.ringbuffer.read(self.EVENT_HEADER_SIZE)
             offset, n_bytes_event = struct.unpack(self.EVENT_HEADER_FORMAT,
                                                   header)
-            data = self.ringbuffer.read(n_bytes_event)
-            event = struct.unpack("{}B".format(n_bytes_event), data)
+            event_data = self.ringbuffer.read(n_bytes_event)
+            event = struct.unpack("{}B".format(n_bytes_event), event_data)
             events.append((offset, event))
         return events
 
@@ -180,6 +180,7 @@ class ExtendedClient(jack.Client):
         blocks = int((ringbuffer_time * 60) / (self.blocksize / self.samplerate))
         self._audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
                                             blocks=blocks)
+        self._max_offset = self.blocksize - 1
 
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
@@ -188,6 +189,7 @@ class ExtendedClient(jack.Client):
         self._capture_timepoints = []
 
     def _handle_xrun(self, delay_usecs):
+        # does not need to be suitable for real-time execution
         self._xruns.append((time.time(), delay_usecs))
 
     def _process(self, frames):
@@ -206,8 +208,12 @@ class ExtendedClient(jack.Client):
             self.midi_outports[0].write_midi_event(*event)
 
     def send_events(self, events):
-        """Write events to the ringbuffer for reading by next process cycle."""
-        offset = self.frames_since_cycle_start
+        """Write events to the ringbuffer for reading by next process cycle.
+
+        If offset is determined by ``frames_since_cycle_start``, which is an
+        estimate, might need to force into [0, blocksize).
+        """
+        offset = 0
         for event in events:
             self._eventsbuffer.write_event(offset, event)
 
