@@ -92,6 +92,10 @@ class AudioRingBuffer(object):
             See ``jack_default_audio_sample_t`` in the JACK C source code.
             Given as a Python format string with an integer field to be
             replaced by the number of frames per buffer stored.
+        FRAME_BYTES (int): Number of bytes per frame.
+        BUFFER_FORMAT (str): Defines the C datatype of a JACK block buffer.
+            Provided as a string template based on ``FRAME_FORMAT``, to be
+            formatted with the number of frames per block on instantiation.
 
     Note:
         With 1024 samples/block and 44100 samples/s, 2 channels, and samples
@@ -116,14 +120,17 @@ class AudioRingBuffer(object):
         self._ringbuffer = jack.RingBuffer(blocks * self.block_bytes)
         self._last = jack.RingBuffer(self.block_bytes + 1)
         self.channels = channels
+        self._active = False
 
     def write_block(self, buffers):
-        """Write buffers for a single block to the ringbuffer.
+        """If ringbuffer is active, write buffers for a single block.
 
         Args:
             buffers (List[buffer]): JACK CFFI buffers from audio ports.
-                Should have length equal to the number of channels per block.
+                Should have length equal to the number of channels.
         """
+        if not self._active:
+            return
         if not len(buffers) == self.channels:
             raise ValueError("Number of buffers passed for block write not "
                              "equal to number of ringbuffer channels")
@@ -140,6 +147,18 @@ class AudioRingBuffer(object):
         """
         buffers = self._ringbuffer.read(self.block_bytes)
         return buffers
+
+    def activate(self):
+        """Enable writes of incoming buffers to ringbuffer."""
+        self._active = True
+
+    def deactivate(self):
+        """Disable writes of incoming buffers to ringbuffer."""
+        self._active = False
+
+    @property
+    def active(self):
+        return self._active
 
     @property
     def last(self):
@@ -190,7 +209,6 @@ class ExtendedClient(jack.Client):
         self._capture(frames)
         self._midi_write(frames)
 
-    @muser.utils.if_true('_capture_toggle')
     def _capture(self, frames):
         """The capture process. Runs continuously with activated client."""
         buffers = [port[1].get_buffer() for port in self._inport_enum]
@@ -252,25 +270,30 @@ class ExtendedClient(jack.Client):
                                  "does not match that of events sequence")
         except TypeError:
             blocks = [blocks] * len(events_sequence)
-        events_sequence = [events.tolist() for events in events_sequence]
+        try:
+            events_sequence = [events for events in events_sequence]
+        except AttributeError:
+            pass
         if send_events is None:
             send_events = self.send_events
-        capture_args = (events_sequence, send_events, blocks, init_blocks,
-                        1.0 / amp_testrate, amp_rel_thres, max_xruns)
 
+        capture_args = (events_sequence, send_events, blocks, init_blocks,
+                        1. / amp_testrate, amp_rel_thres,
+                        self.n_xruns, max_xruns)
         for a in range(attempts):
+            self._audiobuffer.activate()
             attempt = self._capture_loop(*capture_args)
+            self._audiobuffer.deactivate()
             if attempt is None:
-                #time.sleep(0.01)
+                time.sleep(0.1)
                 continue
             else:
                 return
 
     @muser.utils.record_with_timepoints('_captured_sequences')
-    @muser.utils.set_true('_capture_toggle')
+    #@muser.utils.set_true('_capture_toggle')
     def _capture_loop(self, events_sequence, send_events, blocks, init_blocks,
-                      amp_testperiod, amp_rel_thres, max_xruns):
-        init_xruns = self.n_xruns
+                      amp_testperiod, amp_rel_thres, init_xruns, max_xruns):
         while self._audiobuffer.n < init_blocks:
             pass
         for e, events in enumerate(events_sequence):
@@ -367,6 +390,7 @@ class ExtendedClient(jack.Client):
     @staticmethod
     def dismantle(jack_client):
         """Unregister all ports, deactivate, and close a ``jack`` client."""
+        jack_client.transport_stop()
         jack_client.outports.clear()
         jack_client.inports.clear()
         jack_client.midi_outports.clear()
