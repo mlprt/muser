@@ -153,6 +153,10 @@ class AudioRingBuffer(object):
         return self._ringbuffer.read_space // self.block_bytes
 
 
+class XrunError(Exception):
+    pass
+
+
 class ExtendedClient(jack.Client):
     """Extended ``jack`` client with audio capture and MIDI event queuing.
 
@@ -184,6 +188,8 @@ class ExtendedClient(jack.Client):
 
         self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
+        self._n_capture_xruns = 0
+        self._max_capture_xruns = None
 
         self._capture_toggle = False
         self._capture_timepoints = []
@@ -191,6 +197,11 @@ class ExtendedClient(jack.Client):
     def _handle_xrun(self, delay_usecs):
         # does not need to be suitable for real-time execution
         self._xruns.append((time.time(), delay_usecs))
+        if self._capture_toggle and self._max_capture_xruns is not None:
+            print('xrun at: ', self._xruns[-1][0])
+            self._n_capture_xruns += 1
+            if self._n_capture_xruns > self._max_capture_xruns:
+                raise XrunError('Number of logged xruns exceeds given limit')
 
     def _process(self, frames):
         self._capture(frames)
@@ -217,11 +228,9 @@ class ExtendedClient(jack.Client):
         for event in events:
             self._eventsbuffer.write_event(offset, event)
 
-    @muser.utils.record_timepoints('_capture_timepoints')
-    @muser.utils.set_true('_capture_toggle')
-    def capture_events(self, events_sequence, send_events=None,
-                       blocks=None, init_blocks=0,
-                       amp_testrate=25, amp_rel_thres=1e-4):
+    def capture_events(self, events_sequence, send_events=None, blocks=None,
+                       init_blocks=0, amp_testrate=25, amp_rel_thres=1e-4,
+                       max_xruns=0, attempts=5):
         """Send groups of MIDI events in series and capture the result.
 
         TODO: Times (based on self.blocksize and self.samplerate) instead of/
@@ -246,6 +255,8 @@ class ExtendedClient(jack.Client):
             amp_rel_thres (float): Fraction of the max amplitude (established
                 during volume testing) at which to set the threshold for
                 continuation.
+            max_xruns (int): Max xruns to allow before re-attempting capture
+            attempts (int): Number of xrun-prompted re-attempts before aborting
         """
         try:
             if not len(blocks) == len(events_sequence):
@@ -257,7 +268,24 @@ class ExtendedClient(jack.Client):
         events_sequence = [events.tolist() for events in events_sequence]
         if send_events is None:
             send_events = self.send_events
+        self._max_capture_xruns = max_xruns
 
+        for attempt in range(attempts):
+            try:
+                self._n_capture_xruns = 0
+                self._capture_loop(events_sequence, send_events, blocks,
+                                   init_blocks, amp_testrate, amp_rel_thres)
+            except XrunError:
+                if attempt == (attempts - 1):
+                    raise
+                print("Re-trying capture")
+                # TODO: silence synth
+                pass
+
+    @muser.utils.record_timepoints('_capture_timepoints')
+    @muser.utils.set_true('_capture_toggle')
+    def _capture_loop(self, events_sequence, send_events, blocks, init_blocks,
+                      amp_testrate, amp_rel_thres):
         while self._audiobuffer.n < init_blocks:
             pass
         for e, events in enumerate(events_sequence):
@@ -265,10 +293,11 @@ class ExtendedClient(jack.Client):
             if blocks[e] is None:
                 amp_max = 0
                 amp_thres = 0
+                test_period = 1. / amp_testrate
                 while True:
-                    time.sleep(1. / amp_testrate)
+                    time.sleep(test_period)
                     last = struct.unpack(self._audiobuffer.buffers_format,
-                                         self._audiobuffer.last)
+                                            self._audiobuffer.last)
                     last_max = max(last)
                     if last_max > amp_max:
                         amp_max = last_max
@@ -299,13 +328,18 @@ class ExtendedClient(jack.Client):
 
     @property
     def timepoints(self):
-        """np.ndarray: Array of capture start and stop timepoints. """
+        """np.ndarray: Array of capture start and stop timepoints."""
         return np.array(self._timepoints)
 
     @property
     def xruns(self):
-        """np.ndarray: Array of logged xrun times. """
+        """np.ndarray: Array of logged xrun times."""
         return np.array(self._xruns)
+
+    @property
+    def n_xruns(self):
+        """int: Number of xruns logged by the client."""
+        return len(self._xruns)
 
     @staticmethod
     def register_ports(jack_client, **port_args):
