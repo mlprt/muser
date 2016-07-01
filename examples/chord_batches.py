@@ -19,7 +19,7 @@ synth_outports = ["Pianoteq55:out_1", "Pianoteq55:out_2"]
 synth_midi_in = "Pianoteq55:midi_in"
 
 # Batch generation parameters
-chord_size = 10
+chord_size = 3
 batch_size = 2
 batches = 1
 print_details = True
@@ -36,7 +36,7 @@ chord_batches['velocity_vector'] = utils.get_batches(chord_gen, batches,
 
 # JACK client initialization
 channels = len(synth_outports)
-jack_client = iodata.ExtendedClient(inports=channels, midi_outports=1)
+jack_client = iodata.SynthInterfaceClient(inports=channels)
 samplerate = jack_client.samplerate
 
 jack_client.activate()
@@ -68,14 +68,14 @@ try:
         for item in jack_client.captured_sequences:
             times = np.array(item[1]) - start_time
             xrun = " (Xrun)" if item[0] is None else ''
-            print("{:10.4f} s\t{:10.4f} s {}".format(*times, xrun))
+            print("{:10.4f} s\t{:10.4f} s {}".format(times[0], times[1], xrun))
 
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
-    iodata.ExtendedClient.dismantle(jack_client)
+    jack_client.dismantle()
     raise
 
-iodata.ExtendedClient.dismantle(jack_client)
+jack_client.dismantle()
 
 # store chord batches
 batches_dir = os.path.join(data_dir, 'chord_batches')

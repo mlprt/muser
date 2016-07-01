@@ -118,7 +118,7 @@ class AudioRingBuffer(object):
         self.block_format = channels * self.BUFFER_FORMAT.format(blocksize)
         self.block_bytes = struct.calcsize(self.block_format)
         self._ringbuffer = jack.RingBuffer(blocks * self.block_bytes)
-        self._last = jack.RingBuffer(self.block_bytes + 1)
+        self._last = jack.RingBuffer(self.block_bytes * 2)
         self.channels = channels
         self._active = False
 
@@ -173,8 +173,79 @@ class AudioRingBuffer(object):
         return self._ringbuffer.read_space // self.block_bytes
 
 
-class ExtendedClient(jack.Client):
-    """Extended ``jack`` client with audio capture and MIDI event queuing.
+class ExtendedJackClient(jack.Client):
+    """A ``jack`` client with added management features.
+
+    Defines a default Xrun callback that logs Xrun details, and properties
+    for tracking of Xruns and access to commonly calculated quantities.
+
+    Args:
+        name (str): The JACK client name.
+    """
+
+    def __init__(self, name):
+        super().__init__(name=name)
+        self.set_xrun_callback(self._handle_xrun)
+        self._xruns = []
+
+    def _handle_xrun(self, delay_usecs):
+        # does not need to be suitable for real-time execution
+        self._xruns.append((time.time(), delay_usecs))
+
+    @staticmethod
+    def _register_ports(jack_client, **port_args):
+        """Register a JACK client's ports of the given type and number.
+
+        Note:
+            It is the caller's responsibility to properly specify ``**port_args``,
+            and to document them!
+
+        Args:
+            jack_client (jack.Client): The client to register the ports.
+            **port_args: Keywords give port type, args give quantity to register.
+                ``port_args.keys()`` must be a subset of ``JACK_PORT_NAMES.keys()``
+        """
+        for port_type, n in port_args.items():
+            ports = getattr(jack_client, port_type)
+            for p in range(n):
+                ports.register(JACK_PORT_NAMES[port_type].format(p))
+
+    def dismantle(self):
+        """Unregister all ports, deactivate, and close the ``jack`` client."""
+        self.transport_stop()
+        self.outports.clear()
+        self.inports.clear()
+        self.midi_outports.clear()
+        self.midi_inports.clear()
+        self.deactivate()
+        self.close()
+
+    @property
+    def xruns(self):
+        """np.ndarray: Array of logged xrun times."""
+        return np.array(self._xruns)
+
+    @property
+    def n_xruns(self):
+        """int: Number of xruns logged by the client."""
+        return len(self._xruns)
+
+    @property
+    def max_offset(self):
+        """int: The largest offset for a buffer frame."""
+        return (self.blocksize - 1)
+
+    @property
+    def blocktime(self):
+        """float: The number of seconds in one JACK buffer."""
+        return (self.blocksize / self.samplerate)
+
+
+class SynthInterfaceClient(ExtendedJackClient):
+    """Extended ``jack`` client with audio capture and MIDI event sending.
+
+    Uses ``jack`` ringbuffers for thread-safe exchanges of MIDI and audio data
+    with the process callback.
 
     Note:
         Number of bytes allocated for the MIDIRingBuffer does not need to equal
@@ -189,21 +260,19 @@ class ExtendedClient(jack.Client):
         ringbuffer_time (float): Minutes of audio to allocate for ringbuffer.
     """
 
-    def __init__(self, name='CapturerClient', inports=1, midi_outports=1,
-                 ringbuffer_time=10):
+    def __init__(self, name='Muser Synth Interface', inports=1, midi_outports=1,
+                 audiobuffer_time=10):
         super().__init__(name=name)
-        ExtendedClient.register_ports(self, inports=inports,
-                                      midi_outports=midi_outports)
+        ExtendedJackClient._register_ports(self, inports=inports,
+                                           midi_outports=midi_outports)
         self._inport_enum = list(enumerate(self.inports))
-        self.set_process_callback(self._process)
-        self._eventsbuffer = MIDIRingBuffer(self.blocksize)
-        audiobuffer_blocks = int(60 * ringbuffer_time / self.blocktime)
-        self._audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
-                                            blocks=audiobuffer_blocks)
-        self.set_xrun_callback(self._handle_xrun)
-        self._xruns = []
-        self._capture_toggle = False
+        audiobuffer_blocks = int(60 * audiobuffer_time / self.blocktime)
+        self.__audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
+                                             blocks=audiobuffer_blocks)
+        self.__eventsbuffer = MIDIRingBuffer(self.blocksize)
         self._captured_sequences = []
+
+        self.set_process_callback(self._process)
 
     def _process(self, frames):
         self._capture(frames)
@@ -212,16 +281,12 @@ class ExtendedClient(jack.Client):
     def _capture(self, frames):
         """The capture process. Runs continuously with activated client."""
         buffers = [port[1].get_buffer() for port in self._inport_enum]
-        self._audiobuffer.write_block(buffers)
+        self.__audiobuffer.write_block(buffers)
 
     def _midi_write(self, frames):
         self.midi_outports[0].clear_buffer()
-        for event in self._eventsbuffer.read_events():
+        for event in self.__eventsbuffer.read_events():
             self.midi_outports[0].write_midi_event(*event)
-
-    def _handle_xrun(self, delay_usecs):
-        # does not need to be suitable for real-time execution
-        self._xruns.append((time.time(), delay_usecs))
 
     def send_events(self, events):
         """Write events to the ringbuffer for reading by next process cycle.
@@ -231,7 +296,7 @@ class ExtendedClient(jack.Client):
         """
         offset = 0
         for event in events:
-            self._eventsbuffer.write_event(offset, event)
+            self.__eventsbuffer.write_event(offset, event)
 
     def capture_events(self, events_sequence, send_events=None, blocks=None,
                        init_blocks=0, amp_testrate=25, amp_rel_thres=1e-4,
@@ -281,9 +346,9 @@ class ExtendedClient(jack.Client):
                         1. / amp_testrate, amp_rel_thres,
                         self.n_xruns, max_xruns)
         for a in range(attempts):
-            self._audiobuffer.activate()
+            self.__audiobuffer.activate()
             attempt = self._capture_loop(*capture_args)
-            self._audiobuffer.deactivate()
+            self.__audiobuffer.deactivate()
             if attempt is None:
                 time.sleep(0.1)
                 continue
@@ -291,10 +356,9 @@ class ExtendedClient(jack.Client):
                 return
 
     @muser.utils.record_with_timepoints('_captured_sequences')
-    #@muser.utils.set_true('_capture_toggle')
     def _capture_loop(self, events_sequence, send_events, blocks, init_blocks,
                       amp_testperiod, amp_rel_thres, init_xruns, max_xruns):
-        while self._audiobuffer.n < init_blocks:
+        while self.__audiobuffer.n < init_blocks:
             pass
         for e, events in enumerate(events_sequence):
             send_events(events)
@@ -306,8 +370,8 @@ class ExtendedClient(jack.Client):
                     time.sleep(amp_testperiod)
                     if (self.n_xruns - init_xruns) > max_xruns:
                         return
-                    last = struct.unpack(self._audiobuffer.buffers_format,
-                                         self._audiobuffer.last)
+                    last = struct.unpack(self.__audiobuffer.buffers_format,
+                                         self.__audiobuffer.last)
                     last_max = max(last)
                     if last_max > amp_max:
                         amp_max = last_max
@@ -315,8 +379,8 @@ class ExtendedClient(jack.Client):
                     if not last_max > amp_thres:
                         break
             else:
-                n = self._audiobuffer.n
-                while (self._audiobuffer.n - n) < blocks[e]:
+                n = self.__audiobuffer.n
+                while (self.__audiobuffer.n - n) < blocks[e]:
                     pass
                     if (self.n_xruns - init_xruns) > max_xruns:
                         return
@@ -329,10 +393,10 @@ class ExtendedClient(jack.Client):
             captured (np.ndarray):
         """
         captured = [[] for i in self.inports]
-        data_format = self._audiobuffer.block_format
+        data_format = self.__audiobuffer.block_format
         bs = self.blocksize
-        while self._audiobuffer.n:
-            data = struct.unpack(data_format, self._audiobuffer.read_block())
+        while self.__audiobuffer.n:
+            data = struct.unpack(data_format, self.__audiobuffer.read_block())
             for n, channel in enumerate(captured):
                 ch_i, ch_f = n * bs, (n + 1) * bs
                 channel.append(data[ch_i:ch_f])
@@ -349,64 +413,15 @@ class ExtendedClient(jack.Client):
         """np.ndarray: Start and stop timepoints of event sequence captures."""
         return np.array([s[1] for s in self._captured_sequences])
 
-    @property
-    def xruns(self):
-        """np.ndarray: Array of logged xrun times."""
-        return np.array(self._xruns)
 
-    @property
-    def n_xruns(self):
-        """int: Number of xruns logged by the client."""
-        return len(self._xruns)
-
-    @property
-    def max_offset(self):
-        """int: The largest offset for a buffer frame."""
-        return (self.blocksize - 1)
-
-    @property
-    def blocktime(self):
-        """float: The number of seconds in one JACK buffer."""
-        return (self.blocksize / self.samplerate)
-
-    @staticmethod
-    def register_ports(jack_client, **port_args):
-        """Register a JACK client's ports of the given type and number.
-
-        Note:
-            It is the caller's responsibility to properly specify ``**port_args``,
-            and to document them!
-
-        Args:
-            jack_client (jack.Client): The client to register the ports.
-            **port_args: Keywords give port type, args give quantity to register.
-                ``port_args.keys()`` must be a subset of ``JACK_PORT_NAMES.keys()``
-        """
-        for port_type, n in port_args.items():
-            ports = getattr(jack_client, port_type)
-            for p in range(n):
-                ports.register(JACK_PORT_NAMES[port_type].format(p))
-
-    @staticmethod
-    def dismantle(jack_client):
-        """Unregister all ports, deactivate, and close a ``jack`` client."""
-        jack_client.transport_stop()
-        jack_client.outports.clear()
-        jack_client.inports.clear()
-        jack_client.midi_outports.clear()
-        jack_client.midi_inports.clear()
-        jack_client.deactivate()
-        jack_client.close()
-
-
-def jack_client_with_ports(name="MuserClient", inports=0, outports=0,
+def jack_client_with_ports(name="Muser", inports=0, outports=0,
                            midi_inports=0, midi_outports=0):
     """Return an inactive ``jack`` client with registered ports."""
     jack_client = jack.Client(name)
-    ExtendedClient.register_ports(jack_client,
-                                  inports=inports, outports=outports,
-                                  midi_inports=midi_inports,
-                                  midi_outports=midi_outports)
+    ExtendedJackClient._register_ports(jack_client,
+                                       inports=inports, outports=outports,
+                                       midi_inports=midi_inports,
+                                       midi_outports=midi_outports)
     return jack_client
 
 
