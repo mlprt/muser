@@ -121,6 +121,7 @@ class AudioRingBuffer(object):
         self._last = jack.RingBuffer(self.block_bytes * 2)
         self.channels = channels
         self._active = False
+        self._n = 0
 
     def write_block(self, buffers):
         """If ringbuffer is active, write buffers for a single block.
@@ -138,6 +139,7 @@ class AudioRingBuffer(object):
         self._last.read_advance(self.block_bytes)
         self._last.write(data)
         self._ringbuffer.write(data)
+        self._n += 1
 
     def read_block(self):
         """Read a single block's buffers from the ringbuffer.
@@ -146,6 +148,7 @@ class AudioRingBuffer(object):
             buffers (List[buffer]): JACK CFFI buffers for a single audio block.
         """
         buffers = self._ringbuffer.read(self.block_bytes)
+        self._n -= 1
         return buffers
 
     def activate(self):
@@ -170,7 +173,7 @@ class AudioRingBuffer(object):
     @property
     def n(self):
         """int: Number of blocks stored in ringbuffer."""
-        return self._ringbuffer.read_space // self.block_bytes
+        return self._n
 
 
 class ExtendedJackClient(jack.Client):
@@ -210,13 +213,16 @@ class ExtendedJackClient(jack.Client):
             for p in range(n):
                 ports.register(JACK_PORT_NAMES[port_type].format(p))
 
+    def disconnect_all(self):
+        """Disconnect all connections of ports belonging to instance."""
+        for port in self.get_ports(self.name):
+            port.disconnect()
+
     def dismantle(self):
         """Unregister all ports, deactivate, and close the ``jack`` client."""
         self.transport_stop()
-        self.outports.clear()
-        self.inports.clear()
-        self.midi_outports.clear()
-        self.midi_inports.clear()
+        for port_type in JACK_PORT_NAMES:
+            getattr(self, port_type).clear()
         self.deactivate()
         self.close()
 
@@ -253,6 +259,9 @@ class SynthInterfaceClient(ExtendedJackClient):
         the blocksize (same samplerate), expect to send twice as many events
         per block.
 
+        The ``silence_event`` event is configured to mute/reset all audio
+        generation by the synthesizer.
+
     Args:
         name (str): Client name.
         inports (int): Number of inports to register and capture from.
@@ -261,7 +270,7 @@ class SynthInterfaceClient(ExtendedJackClient):
     """
 
     def __init__(self, name='Muser Synth Interface', inports=1, midi_outports=1,
-                 audiobuffer_time=10):
+                 audiobuffer_time=10, silence_event=(0xb0, 0, 0)):
         super().__init__(name=name)
         ExtendedJackClient._register_ports(self, inports=inports,
                                            midi_outports=midi_outports)
@@ -271,6 +280,7 @@ class SynthInterfaceClient(ExtendedJackClient):
                                              blocks=audiobuffer_blocks)
         self.__eventsbuffer = MIDIRingBuffer(self.blocksize)
         self._captured_sequences = []
+        self._silence_event = silence_event
 
         self.set_process_callback(self._process)
 
@@ -350,7 +360,8 @@ class SynthInterfaceClient(ExtendedJackClient):
             attempt = self._capture_loop(*capture_args)
             self.__audiobuffer.deactivate()
             if attempt is None:
-                time.sleep(0.1)
+                send_events((self._silence_event,))
+                #time.sleep(0.1)
                 continue
             else:
                 return
