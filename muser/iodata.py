@@ -188,8 +188,8 @@ class ExtendedJackClient(jack.Client):
 
     def __init__(self, name):
         super().__init__(name=name)
-        self.set_xrun_callback(self._handle_xrun)
         self._xruns = []
+        self.set_xrun_callback(self._handle_xrun)
 
     def _handle_xrun(self, delay_usecs):
         # does not need to be suitable for real-time execution
@@ -200,13 +200,13 @@ class ExtendedJackClient(jack.Client):
         """Register a JACK client's ports of the given type and number.
 
         Note:
-            It is the caller's responsibility to properly specify ``**port_args``,
+            It is caller's responsibility to properly specify ``**port_args``,
             and to document them!
 
         Args:
             jack_client (jack.Client): The client to register the ports.
-            **port_args: Keywords give port type, args give quantity to register.
-                ``port_args.keys()`` must be a subset of ``JACK_PORT_NAMES.keys()``
+            **port_args: Keys give port type, values give quantity to register.
+                Keys of ``port_args`` must be key subset of ``JACK_PORT_NAMES``
         """
         for port_type, n in port_args.items():
             ports = getattr(jack_client, port_type)
@@ -221,9 +221,10 @@ class ExtendedJackClient(jack.Client):
     def dismantle(self):
         """Unregister all ports, deactivate, and close the ``jack`` client."""
         self.transport_stop()
+        self.disconnect_all()
+        self.deactivate()
         for port_type in JACK_PORT_NAMES:
             getattr(self, port_type).clear()
-        self.deactivate()
         self.close()
 
     @property
@@ -269,12 +270,13 @@ class SynthInterfaceClient(ExtendedJackClient):
         ringbuffer_time (float): Minutes of audio to allocate for ringbuffer.
     """
 
-    def __init__(self, name='Muser Synth Interface', inports=1, midi_outports=1,
+    def __init__(self, name='Muser Synth Interface', inports=2,
                  audiobuffer_time=10, silence_event=(0xb0, 0, 0)):
         super().__init__(name=name)
         ExtendedJackClient._register_ports(self, inports=inports,
-                                           midi_outports=midi_outports)
+                                           midi_outports=1)
         self._inport_enum = list(enumerate(self.inports))
+        self.midi_outport = self.midi_outports[0]
         audiobuffer_blocks = int(60 * audiobuffer_time / self.blocktime)
         self.__audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
                                              blocks=audiobuffer_blocks)
@@ -294,9 +296,9 @@ class SynthInterfaceClient(ExtendedJackClient):
         self.__audiobuffer.write_block(buffers)
 
     def _midi_write(self, frames):
-        self.midi_outports[0].clear_buffer()
+        self.midi_outport.clear_buffer()
         for event in self.__eventsbuffer.read_events():
-            self.midi_outports[0].write_midi_event(*event)
+            self.midi_outport.write_midi_event(*event)
 
     def send_events(self, events):
         """Write events to the ringbuffer for reading by next process cycle.
