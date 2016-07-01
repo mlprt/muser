@@ -189,11 +189,13 @@ class ExtendedJackClient(jack.Client):
     def __init__(self, name):
         super().__init__(name=name)
         self._xruns = []
+        self._n_xruns = 0
         self.set_xrun_callback(self._handle_xrun)
 
     def _handle_xrun(self, delay_usecs):
         # does not need to be suitable for real-time execution
         self._xruns.append((time.time(), delay_usecs))
+        self._n_xruns += 1
 
     @staticmethod
     def _register_ports(jack_client, **port_args):
@@ -235,7 +237,7 @@ class ExtendedJackClient(jack.Client):
     @property
     def n_xruns(self):
         """int: Number of xruns logged by the client."""
-        return len(self._xruns)
+        return self._n_xruns
 
     @property
     def max_offset(self):
@@ -275,6 +277,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         super().__init__(name=name)
         ExtendedJackClient._register_ports(self, inports=inports,
                                            midi_outports=1)
+        self.set_process_callback(self._process)
         self._inport_enum = list(enumerate(self.inports))
         self.midi_outport = self.midi_outports[0]
         audiobuffer_blocks = int(60 * audiobuffer_time / self.blocktime)
@@ -283,8 +286,6 @@ class SynthInterfaceClient(ExtendedJackClient):
         self.__eventsbuffer = MIDIRingBuffer(self.blocksize)
         self._captured_sequences = []
         self._silence_event = silence_event
-
-        self.set_process_callback(self._process)
 
     def _process(self, frames):
         self._capture(frames)
