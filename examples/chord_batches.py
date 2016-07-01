@@ -12,6 +12,9 @@ import scipy.io.wavfile
 import os
 import time
 
+import cProfile
+import pstats
+
 # User and synth parameters
 data_dir = '/tmp/muser/'
 os.makedirs(data_dir, exist_ok=True)
@@ -19,10 +22,11 @@ synth_outports = ["Pianoteq55:out_1", "Pianoteq55:out_2"]
 synth_midi_in = "Pianoteq55:midi_in"
 
 # Batch generation parameters
-chord_size = 3
+chord_size = 1
 batch_size = 2
 batches = 1
 print_details = True
+profile_capture = True
 
 # data structure
 chord_dtype = np.dtype([('velocity_vector', np.uint8, iodata.N_PITCHES),
@@ -42,7 +46,8 @@ samplerate = jack_client.samplerate
 jack_client.activate()
 try:
     # connect MIDI and audio ports of synthesizer and JACK client
-    jack_client.connect(jack_client.midi_outports[0], synth_midi_in)
+    jack_client.disconnect_all()
+    jack_client.connect(jack_client.midi_outport, synth_midi_in)
     for port_pair in zip(synth_outports, jack_client.inports):
         port_pair[1].disconnect()
         jack_client.connect(*port_pair)
@@ -55,12 +60,22 @@ try:
                                                     velocity=100)
             notes_off = iodata.vector_to_midi_events('OFF', velocity_vector)
             events_sequence = [notes_on, notes_off]
-            jack_client.capture_events(events_sequence, blocks=(250, 25),
-                                       init_blocks=25)
+            if profile_capture:
+                cProfile.run('jack_client.capture_events(events_sequence, '
+                             'blocks=(250, 25), init_blocks=25, '
+                             'amp_testrate=50)', 'capture_events-profile')
+            else:
+                jack_client.capture_events(events_sequence, blocks=(250, 25),
+                                           init_blocks=25)
+
             chord['captured_buffers'] = jack_client.drop_captured()
 
+    if profile_capture:
+        profile = pstats.Stats('capture_events-profile').strip_dirs()
+        profile.strip_dirs().sort_stats('time').print_stats(10)
+
     if print_details:
-        print("\n{} Xruns".format(jack_client.n_xruns))
+        print("{} Xruns".format(jack_client.n_xruns))
         for xrun in (jack_client.xruns - start_time):
             print('{:.4f} s'.format(xrun[0]))
         print("\nCapture timepoints")
