@@ -121,7 +121,6 @@ class AudioRingBuffer(object):
         self._last = jack.RingBuffer(self.block_bytes * 2)
         self.channels = channels
         self._active = False
-        self._n = 0
 
     def write_block(self, buffers):
         """If ringbuffer is active, write buffers for a single block.
@@ -130,16 +129,14 @@ class AudioRingBuffer(object):
             buffers (List[buffer]): JACK CFFI buffers from audio ports.
                 Should have length equal to the number of channels.
         """
-        if not self._active:
-            return
         if not len(buffers) == self.channels:
             raise ValueError("Number of buffers passed for block write not "
                              "equal to number of ringbuffer channels")
         data = b''.join(bytes(buffer_) for buffer_ in buffers)
         self._last.read_advance(self.block_bytes)
         self._last.write(data)
-        self._ringbuffer.write(data)
-        self._n += 1
+        if self._active:
+            self._ringbuffer.write(data)
 
     def read_block(self):
         """Read a single block's buffers from the ringbuffer.
@@ -148,8 +145,11 @@ class AudioRingBuffer(object):
             buffers (List[buffer]): JACK CFFI buffers for a single audio block.
         """
         buffers = self._ringbuffer.read(self.block_bytes)
-        self._n -= 1
         return buffers
+
+    def reset(self):
+        """Empty the ringbuffer. Not thread safe."""
+        self._ringbuffer.reset()
 
     def activate(self):
         """Enable writes of incoming buffers to ringbuffer."""
@@ -161,6 +161,7 @@ class AudioRingBuffer(object):
 
     @property
     def active(self):
+        """bool: Whether incoming buffers are being written."""
         return self._active
 
     @property
@@ -173,7 +174,7 @@ class AudioRingBuffer(object):
     @property
     def n(self):
         """int: Number of blocks stored in ringbuffer."""
-        return self._n
+        return (self._ringbuffer.read_space // self.block_bytes)
 
 
 class ExtendedJackClient(jack.Client):
@@ -313,7 +314,7 @@ class SynthInterfaceClient(ExtendedJackClient):
 
     def capture_events(self, events_sequence, send_events=None, blocks=None,
                        init_blocks=0, amp_testrate=25, amp_rel_thres=1e-4,
-                       max_xruns=0, attempts=5):
+                       max_xruns=0, attempts=10):
         """Send groups of MIDI events in series and capture the result.
 
         TODO: Times (based on self.blocksize and self.samplerate) instead of/
@@ -354,16 +355,18 @@ class SynthInterfaceClient(ExtendedJackClient):
             pass
         if send_events is None:
             send_events = self.send_events
+        amp_testperiod = 1. / amp_testrate
 
-        capture_args = (events_sequence, send_events, blocks, init_blocks,
-                        1. / amp_testrate, amp_rel_thres,
-                        self.n_xruns, max_xruns)
         for a in range(attempts):
+            capture_args = (events_sequence, send_events, blocks, init_blocks,
+                            amp_testperiod, amp_rel_thres,
+                            self.n_xruns, max_xruns)
             self.__audiobuffer.activate()
             attempt = self._capture_loop(*capture_args)
             self.__audiobuffer.deactivate()
+            self.silence_synth()
             if attempt is None:
-                send_events((self._silence_event,))
+                self.__audiobuffer.reset()
                 #time.sleep(0.1)
                 continue
             else:
@@ -395,7 +398,6 @@ class SynthInterfaceClient(ExtendedJackClient):
             else:
                 n = self.__audiobuffer.n
                 while (self.__audiobuffer.n - n) < blocks[e]:
-                    pass
                     if (self.n_xruns - init_xruns) > max_xruns:
                         return
         return events_sequence
@@ -406,16 +408,21 @@ class SynthInterfaceClient(ExtendedJackClient):
         Returns:
             captured (np.ndarray):
         """
-        captured = [[] for i in self.inports]
-        data_format = self.__audiobuffer.block_format
-        bs = self.blocksize
+        blocks = []
         while self.__audiobuffer.n:
-            data = struct.unpack(data_format, self.__audiobuffer.read_block())
-            for n, channel in enumerate(captured):
-                ch_i, ch_f = n * bs, (n + 1) * bs
-                channel.append(data[ch_i:ch_f])
-        captured = np.array(captured, dtype=np.float32)
+            blocks.append(struct.unpack(self.__audiobuffer.block_format,
+                                        self.__audiobuffer.read_block()))
+        n, channels = len(blocks), len(self.inports)
+        captured = np.ndarray((channels, n, self.blocksize))
+        tmp = np.array(blocks, dtype=np.float32).reshape((n * channels,
+                                                          self.blocksize))
+        for ch, channel in enumerate(captured):
+            channel = tmp[ch::channels]
         return captured
+
+    def silence_synth(self):
+        """Send signal to synthesizer to zero audio output."""
+        self.send_events((self._silence_event,))
 
     @property
     def captured_sequences(self):
@@ -426,6 +433,7 @@ class SynthInterfaceClient(ExtendedJackClient):
     def capture_timepoints(self):
         """np.ndarray: Start and stop timepoints of event sequence captures."""
         return np.array([s[1] for s in self._captured_sequences])
+
 
 
 def jack_client_with_ports(name="Muser", inports=0, outports=0,
