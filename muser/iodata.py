@@ -115,11 +115,14 @@ class AudioRingBuffer(object):
     BUFFER_FORMAT = "{:d}" + FRAME_FORMAT
 
     def __init__(self, blocksize, channels, blocks=10000):
-        self.block_format = channels * self.BUFFER_FORMAT.format(blocksize)
+        self.buffer_format = self.BUFFER_FORMAT.format(blocksize)
+        self.buffer_bytes = struct.calcsize(self.buffer_format)
+        self.block_format = channels * self.buffer_format
         self.block_bytes = struct.calcsize(self.block_format)
-        self._ringbuffer = jack.RingBuffer(blocks * self.block_bytes)
-        self._last = jack.RingBuffer(self.block_bytes * 2)
         self.channels = channels
+
+        self._ringbuffer = jack.RingBuffer(blocks * self.block_bytes)
+        self._last = jack.RingBuffer(self.block_bytes + 1)
         self._active = False
 
     def write_block(self, buffers):
@@ -144,7 +147,8 @@ class AudioRingBuffer(object):
         Returns:
             buffers (List[buffer]): JACK CFFI buffers for a single audio block.
         """
-        buffers = self._ringbuffer.read(self.block_bytes)
+        block = self._ringbuffer.read(self.block_bytes)
+        buffers = list(map(b''.join, zip(*[iter(block)] * self.buffer_bytes)))
         return buffers
 
     def reset(self):
@@ -406,19 +410,14 @@ class SynthInterfaceClient(ExtendedJackClient):
         """Return the audio data captured in the ringbuffer.
 
         Returns:
-            captured (np.ndarray):
+            np.ndarray: JACK audio
         """
         blocks = []
+        buffer_fmt = self.__audiobuffer.buffer_format
         while self.__audiobuffer.n:
-            blocks.append(struct.unpack(self.__audiobuffer.block_format,
-                                        self.__audiobuffer.read_block()))
-        n, channels = len(blocks), len(self.inports)
-        captured = np.ndarray((channels, n, self.blocksize))
-        tmp = np.array(blocks, dtype=np.float32).reshape((n * channels,
-                                                          self.blocksize))
-        for ch, channel in enumerate(captured):
-            channel = tmp[ch::channels]
-        return captured
+            block = self.__audiobuffer.read_block()
+            blocks.append([struct.unpack(buffer_fmt, b) for b in block])
+        return np.array(blocks, dtype=np.float32).swapaxes(0, 1)
 
     def silence_synth(self):
         """Send signal to synthesizer to zero audio output."""
