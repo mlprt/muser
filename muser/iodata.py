@@ -267,18 +267,21 @@ class SynthInterfaceClient(ExtendedJackClient):
         the blocksize (same samplerate), expect to send twice as many events
         per block.
 
-        The ``silence_event`` event is configured to mute/reset all audio
-        generation by the synthesizer.
-
     Args:
         name (str): Client name.
         inports (int): Number of inports to register and capture from.
-        midi_outports (int): Number of MIDI outports to register.
-        ringbuffer_time (float): Minutes of audio to allocate for ringbuffer.
+            Intended to be equal to the number of synthesizer audio outports.
+            Two-channel (stereo) capturing is default.
+        audiobuffer_time (float): Minutes of audio to allocate for ringbuffer.
+            This should be at least as long as the longest audio capture,
+            uninterrupted by a call to ``self.drop_capture()``.
+        silence_event (tuple): MIDI event the synth will take as silencing.
+            Not all synths will silence themselves in response to the same
+            status byte, so the user should verify and alter as needed.
     """
 
     def __init__(self, name='Muser Synth Interface', inports=2,
-                 audiobuffer_time=10, silence_event=(0xb0, 0, 0)):
+                 audiobuffer_time=10, silence_event=(0xB0, 0, 0)):
         super().__init__(name=name)
         ExtendedJackClient._register_ports(self, inports=inports,
                                            midi_outports=1)
@@ -318,7 +321,7 @@ class SynthInterfaceClient(ExtendedJackClient):
 
     def capture_events(self, events_sequence, send_events=None, blocks=None,
                        init_blocks=0, amp_testrate=25, amp_rel_thres=1e-4,
-                       max_xruns=0, attempts=10):
+                       max_xruns=0, attempts=10, cpu_load_thres=15):
         """Send groups of MIDI events in series and capture the result.
 
         TODO: Times (based on self.blocksize and self.samplerate) instead of/
@@ -331,7 +334,7 @@ class SynthInterfaceClient(ExtendedJackClient):
             send_events (function): Accepts an iterable of MIDI events and
                 sends them to the synthesizer.
             blocks (list): Number of JACK blocks to record for each set of
-                events. Wherever ``None``, records the set of events until
+                events. Wherever ``None``, records the current events until
                 the audio amplitude decreases past a threshold.
             init_blocks (int): Number of JACK blocks to record before sending
                 the first set of events.
@@ -345,6 +348,9 @@ class SynthInterfaceClient(ExtendedJackClient):
                 continuation.
             max_xruns (int): Max xruns to allow before re-attempting capture
             attempts (int): Number of xrun-prompted re-attempts before aborting
+            cpu_load_thres (float): Re-attempt capture after CPU load reported
+                by JACK drops below this threshold; 15% by default.
+                Higher CPU load is associated with increased chance of Xruns.
         """
         try:
             if not len(blocks) == len(events_sequence):
@@ -371,7 +377,8 @@ class SynthInterfaceClient(ExtendedJackClient):
             self.silence_synth()
             if attempt is None:
                 self.__audiobuffer.reset()
-                #time.sleep(0.1)
+                while self.cpu_load() > cpu_load_thres:
+                    pass
                 continue
             else:
                 return
