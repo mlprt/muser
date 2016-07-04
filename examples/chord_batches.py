@@ -46,10 +46,10 @@ samplerate = jack_client.samplerate
 jack_client.activate()
 try:
     # connect MIDI and audio ports of synthesizer and JACK client
+    # (disconnect all first to prevent errors if auto-reconnected)
     jack_client.disconnect_all()
     jack_client.connect(jack_client.midi_outport, synth_midi_in)
     for port_pair in zip(synth_outports, jack_client.inports):
-        port_pair[1].disconnect()
         jack_client.connect(*port_pair)
 
     start_time = time.time()
@@ -60,14 +60,13 @@ try:
                                                     velocity=100)
             notes_off = iodata.vector_to_midi_events('OFF', velocity_vector)
             events_sequence = [notes_on, notes_off]
+            capture_exec = ('jack_client.capture_events(events_sequence, '
+                            'blocks=(250, 25), init_blocks=25, amp_testrate=50, '
+                            'max_xruns=1)')
             if profile_capture:
-                cProfile.run('jack_client.capture_events(events_sequence, '
-                             'blocks=(250, 25), init_blocks=25, '
-                             'amp_testrate=50)', 'capture_events-profile')
+                cProfile.run(capture_exec, 'capture_events-profile')
             else:
-                jack_client.capture_events(events_sequence, blocks=(250, 25),
-                                           init_blocks=25)
-
+                exec(capture_exec)
             chord['captured_buffers'] = jack_client.drop_captured()
 
     if profile_capture:
