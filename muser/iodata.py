@@ -15,6 +15,7 @@ import jack
 import time
 import struct
 import copy
+import re
 import rtmidi
 
 SND_DTYPES = {'int16': 16, np.int16: 16, 'int32': 32, np.int32: 32}
@@ -110,9 +111,9 @@ class AudioRingBuffer(object):
             longer the overall capture time, the larger this value should be
             to avoid losing blocks.
     """
-    FRAME_FORMAT = "f"  # floats
+    FRAME_FORMAT = 'f'  # floats
     FRAME_BYTES = struct.calcsize(FRAME_FORMAT)
-    BUFFER_FORMAT = "{:d}" + FRAME_FORMAT
+    BUFFER_FORMAT = '{:d}' + FRAME_FORMAT
 
     def __init__(self, blocksize, channels, blocks=10000):
         self.buffer_format = self.BUFFER_FORMAT.format(blocksize)
@@ -275,25 +276,75 @@ class SynthInterfaceClient(ExtendedJackClient):
         audiobuffer_time (float): Minutes of audio to allocate for ringbuffer.
             This should be at least as long as the longest audio capture,
             uninterrupted by a call to ``self.drop_capture()``.
-        silence_event (tuple): MIDI event the synth will take as silencing.
-            Not all synths will silence themselves in response to the same
+        reset_event (tuple): MIDI event to reset synth output.
+            Not all synths will reset themselves in response to the same
             status byte, so the user should verify and alter as needed.
     """
 
-    def __init__(self, name='Muser Synth Interface', inports=2,
-                 audiobuffer_time=10, silence_event=(0xB0, 0, 0)):
+    def __init__(self, synth_midi_inports, synth_outports,
+                 name="Muser-Synth Interface", reset_event=None,
+                 audiobuffer_time=None):
+
         super().__init__(name=name)
-        ExtendedJackClient._register_ports(self, inports=inports,
-                                           midi_outports=1)
-        self.set_process_callback(self._process)
-        self._inport_enum = list(enumerate(self.inports))
+        ExtendedJackClient._register_ports(self, midi_outports=1,
+                                           inports=len(synth_outports))
         self.midi_outport = self.midi_outports[0]
+        self._inport_enum = list(enumerate(self.inports))
+        self.synth_midi_inports = synth_midi_inports
+        self.synth_outports = synth_outports
+
+        if audiobuffer_time is None:
+            audiobuffer_time = 10
         audiobuffer_blocks = int(60 * audiobuffer_time / self.blocktime)
         self.__audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
                                              blocks=audiobuffer_blocks)
         self.__eventsbuffer = MIDIRingBuffer(self.blocksize)
         self._captured_sequences = []
-        self._silence_event = silence_event
+        self._reset_event = reset_event
+        self.set_process_callback(self._process)
+
+    @classmethod
+    def from_synthname(cls, synth_name, reset_event=None,
+                       audiobuffer_time=None):
+        """ Return an interface to the active synth with the provided name.
+
+        Searches active JACK ports for client names containing ``synth_name``,
+        irrespective of case or surrounding characters.
+
+        Example:
+            Pianoteq v5.5.1 is active with port names like 'Pianoteq55::out_1',
+            with one MIDI inport and five audio outports enabled by default.
+            Calling this constructor with ``synth_name='pianoteq'`` constructs
+            and returns a JACK client with one MIDI outport and five audio
+            outports, and the name 'Muser/Pianoteq55 Interface'.
+
+        Note:
+            Regular expression strings (not compiled objects) can be passed to
+            ``jack.Client.get_ports()``, but ``re`` is used here anyway because
+            passing with the case-insensitive flag '(?i)' caused segfaults.
+
+        Args:
+            synth_name (str): Name of the synthesizer. Case-insensitive.
+            reset_event (Tuple[int]):
+            audiobuffer_time (float):
+        """
+        client_name = "Muser/{} Interface"
+        synth_midi_inports, synth_outports = [], []
+        regex = re.compile(synth_name, re.IGNORECASE)
+        with jack.Client('tmp') as client:
+            for port in client.get_ports():
+                port_name = port.name
+                if regex.search(port_name.split(':')[0]):
+                    if port.is_midi and port.is_input:
+                        synth_midi_inports.append(port_name)
+                    if port.is_audio and port.is_output:
+                        synth_outports.append(port_name)
+        synth_proper_name = synth_outports[0].split(':')[0]
+        return cls(synth_midi_inports=synth_midi_inports,
+                   synth_outports=synth_outports,
+                   name=client_name.format(synth_proper_name),
+                   reset_event=reset_event,
+                   audiobuffer_time=audiobuffer_time)
 
     def _process(self, frames):
         self._capture(frames)
@@ -374,7 +425,7 @@ class SynthInterfaceClient(ExtendedJackClient):
             self.__audiobuffer.activate()
             attempt = self._capture_loop(*capture_args)
             self.__audiobuffer.deactivate()
-            self.silence_synth()
+            self.reset_synth()
             if attempt is None:
                 self.__audiobuffer.reset()
                 while self.cpu_load() > cpu_load_thres:
@@ -426,9 +477,10 @@ class SynthInterfaceClient(ExtendedJackClient):
             blocks.append([struct.unpack(buffer_fmt, b) for b in block])
         return np.array(blocks, dtype=np.float32).swapaxes(0, 1)
 
-    def silence_synth(self):
-        """Send signal to synthesizer to zero audio output."""
-        self.send_events((self._silence_event,))
+    def reset_synth(self):
+        """Send signal to synthesizer to reset output."""
+        if self._reset_event is not None:
+            self.send_events((self._reset_event,))
 
     @property
     def captured_sequences(self):

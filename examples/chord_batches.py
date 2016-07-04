@@ -18,8 +18,7 @@ import pstats
 # User and synth parameters
 data_dir = '/tmp/muser/'
 os.makedirs(data_dir, exist_ok=True)
-synth_outports = ["Pianoteq55:out_1", "Pianoteq55:out_2"]
-synth_midi_in = "Pianoteq55:midi_in"
+synth_name = "Pianoteq"
 
 # Batch generation parameters
 chord_size = 1
@@ -39,18 +38,19 @@ chord_batches['velocity_vector'] = utils.get_batches(chord_gen, batches,
                                                      batch_size, [chord_size])
 
 # JACK client initialization
-channels = len(synth_outports)
-jack_client = iodata.SynthInterfaceClient(inports=channels)
-samplerate = jack_client.samplerate
+client = iodata.SynthInterfaceClient.from_synthname(synth_name,
+                                                    reset_event=(0xB0,0,0))
+samplerate = client.samplerate
 
-jack_client.activate()
+client.activate()
 try:
     # connect MIDI and audio ports of synthesizer and JACK client
     # (disconnect all first to prevent errors if auto-reconnected)
-    jack_client.disconnect_all()
-    jack_client.connect(jack_client.midi_outport, synth_midi_in)
-    for port_pair in zip(synth_outports, jack_client.inports):
-        jack_client.connect(*port_pair)
+    # TODO: Move to iodata
+    client.disconnect_all()
+    client.connect(client.midi_outport, client.synth_midi_inports[0])
+    for port_pair in zip(client.synth_outports, client.inports):
+        client.connect(*port_pair)
 
     start_time = time.time()
     for batch in chord_batches:
@@ -60,36 +60,36 @@ try:
                                                     velocity=100)
             notes_off = iodata.vector_to_midi_events('OFF', velocity_vector)
             events_sequence = [notes_on, notes_off]
-            capture_exec = ('jack_client.capture_events(events_sequence, '
+            capture_exec = ('client.capture_events(events_sequence, '
                             'blocks=(250, 25), init_blocks=25, amp_testrate=50, '
                             'max_xruns=1)')
             if profile_capture:
                 cProfile.run(capture_exec, 'capture_events-profile')
             else:
                 exec(capture_exec)
-            chord['captured_buffers'] = jack_client.drop_captured()
+            chord['captured_buffers'] = client.drop_captured()
 
     if profile_capture:
         profile = pstats.Stats('capture_events-profile').strip_dirs()
         profile.strip_dirs().sort_stats('time').print_stats(10)
 
     if print_details:
-        print("{} Xruns".format(jack_client.n_xruns))
-        for xrun in (jack_client.xruns - start_time):
+        print("{} Xruns".format(client.n_xruns))
+        for xrun in (client.xruns - start_time):
             print('{:.4f} s'.format(xrun[0]))
         print("\nCapture timepoints")
         print('{:>10}  \t{:>10}'.format('Start', 'Stop'))
-        for item in jack_client.captured_sequences:
+        for item in client.captured_sequences:
             times = np.array(item[1]) - start_time
             xrun = " (Xrun)" if item[0] is None else ''
             print("{:10.4f} s\t{:10.4f} s {}".format(times[0], times[1], xrun))
 
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
-    jack_client.dismantle()
+    client.dismantle()
     raise
 
-jack_client.dismantle()
+client.dismantle()
 
 # store chord batches
 batches_dir = os.path.join(data_dir, 'chord_batches')
