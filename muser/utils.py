@@ -6,6 +6,39 @@ import functools
 import time
 
 
+def amp_to_dB(amp):
+    """Converts amplitude to decibel units."""
+    amp_db = 10.0 * np.log10(np.absolute(amp) ** 2)
+    return amp_db
+
+
+def freq_to_hertz(samplerate):
+    """Returns function that converts frequency per-sample to per-second."""
+    def to_hz(freq):
+        return np.absolute(freq * samplerate)
+    return to_hz
+
+
+def time_to_sample(time, samplerate):
+    """Return sample index closest to given time.
+
+    Args:
+        time (float): Time relative to the start of sample indexing.
+        samplerate (int): Rate of sampling for the recording.
+
+    Returns:
+        sample (int): Index of the sample taken nearest to ``time``.
+    """
+    sample = int(time * samplerate)
+    return sample
+
+
+def sample_to_time(sample, samplerate):
+    """Returns times corresponding to samples in a series."""
+    time_ = sample / float(samplerate)
+    return time_
+
+
 def wait_while(toggle_attr):
     """Returns a decorator that waits for an instance attribute to be false."""
     def wait_while_decorator(instance_method):

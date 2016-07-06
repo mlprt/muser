@@ -368,15 +368,12 @@ class SynthInterfaceClient(ExtendedJackClient):
         """
         offset = 0
         for event in events:
-            self.__eventsbuffer.write_event(offset, event)
+            self.__eventsbuffer.write_event(offset, tuple(event))
 
     def capture_events(self, events_sequence, send_events=None, blocks=None,
                        init_blocks=0, amp_testrate=25, amp_rel_thres=1e-4,
                        max_xruns=0, attempts=10, cpu_load_thres=15):
         """Send groups of MIDI events in series and capture the result.
-
-        TODO: Times (based on self.blocksize and self.samplerate) instead of/
-            in addition to block option
 
         Args:
             events_sequence (List[np.ndarray]): Groups of MIDI events to send.
@@ -410,10 +407,6 @@ class SynthInterfaceClient(ExtendedJackClient):
                                  "does not match that of events sequence")
         except TypeError:
             blocks = [blocks] * len(events_sequence)
-        try:
-            events_sequence = [events for events in events_sequence]
-        except AttributeError:
-            pass
         if send_events is None:
             send_events = self.send_events
         amp_testperiod = 1. / amp_testrate
