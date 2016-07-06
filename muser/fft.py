@@ -1,55 +1,52 @@
-""" Fourier analysis. """
+"""Fourier analysis of sampled audio."""
 
 import numpy as np
+import muser.utils
 import pyopencl
 import pyopencl.array
 import gpyfft.fft
 
+def snd_rfft(snd, rfft=None, scale=None, amp_convert=None, freq_convert=None):
+    """Return FFT amplitudes and frequencies for each channel in ``snd``.
 
-def local_rfft(snd, f_start, length, units='', rfft=None, scale=None):
-    """ Return tuple of FFT amplitudes and frequencies for each channel in snd.
+    Args:
+        snd (np.ndarray): Vectors (channels) of audio amplitude samples.
+        rfft (function): Returns FFT amplitudes per vector of audio amplitudes.
+        amp_scale (function):
+        amp_convert (function):
+
+    Returns:
+        amp (np.ndarray): FFT amplitudes.
+        freq (np.ndarray): FFT frequencies.
     """
+    samples = snd.shape[1]
     if rfft is None:
-        rfft = get_np_rfft()
-    loc = slice(f_start, f_start + length)
-    local = [ch[loc] for ch in snd]
-
-    amp = np.stack(rfft(ch) for ch in local)
-    if scale:
-        amp = amp / scale(amp)
-    if units == '':
-        amp = amp
-    elif units == 'dB':
-        amp = 10. * np.log10(abs(amp) ** 2.)
-    elif units == 'sqr':
-        amp = abs(amp) ** 2.
-
-    frq = np.fft.fftfreq(length)[0:amp.shape[1]]
-
-    return amp, frq
+        rfft = np.fft.rfft(data, norm=None)
+    if scale is None:
+        scale = lambda _: np.sqrt(samples)
+    amp = np.apply_along_axis(rfft, 1, snd)
+    amp = amp / scale(amp)
+    if amp_convert is not None:
+        amp = amp_convert(amp)
+    freq = np.fft.fftfreq(samples)[0:samples//2]
+    if freq_convert is not None:
+        freq = freq_convert(freq)
+    return amp, freq
 
 
-def get_np_rfft(norm=None):
-    def np_rfft(data):
-        return np.fft.rfft(data, norm=norm)
-
-    return np_rfft
-
-
-def get_cl_rfft(length):
-    """ Prepares gpyfft for 1D arrays of known length """
+def get_cl_rfft(samples):
+    """Return OpenCL FFT function for 1D arrays of known length."""
     context = pyopencl.create_some_context(interactive=False)
     queue = pyopencl.CommandQueue(context)
 
     def cl_rfft(data):
-        """ """
+        """Calculate and return FFT amplitudes for the given data."""
         data = np.array(data, dtype=np.complex64)
         data_c = pyopencl.array.to_device(queue, data)
         transform = gpyfft.fft.FFT(context, queue, (data_c,))
-        events = transform.enqueue()
-        for e in events:
+        cl_events = transform.enqueue()
+        for e in cl_events:
             e.wait()
-
-        return data_c.get()[:length/2]
+        return data_c.get()[:samples//2]
 
     return cl_rfft

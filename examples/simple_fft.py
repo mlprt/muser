@@ -7,29 +7,30 @@ import muser.fft as fft
 import muser.utils as utils
 import muser.vis as vis
 
-name = "op28-20"
+wav_filename = "op28-20.wav"
 audio_dir = "/home/mll/dev/muser/examples/"
-wavfile_name = audio_dir + name + '.wav'
-t_start = 0.5
-length = 2**15
-length_sqrt = np.sqrt(length)
+wav_filepath = os.path.join(audio_dir, wav_filename)
+time_i = 0.5
+fft_samples = 2**15
 
-sample_rate, snd = iodata.wav_read_norm(wavfile_name)
-i_start = iodata.to_sample_index(t_start, sample_rate)
+samplerate, snd = iodata.wav_read_norm(wav_filepath)
+sample_i = utils.time_to_sample(time_i, samplerate)
+sample_f = sample_i + fft_samples
+time_f = utils.sample_to_time(sample_f, samplerate)
 
-rfft = fft.get_cl_rfft(length)
-amp, freq = fft.local_rfft(snd.T, i_start, length, units='dB',
-                           rfft=rfft, scale=lambda _: length_sqrt)
-freq = abs(sample_rate * freq)   # Hz
+rfft = fft.get_cl_rfft(fft_samples)
+snd_local = snd[sample_i:sample_f]
+amp, freq = fft.snd_rfft(snd_local.T, rfft=rfft, amp_convert=utils.amp_to_dB,
+                         freq_convert=utils.freq_to_hertz(samplerate))
 
 thres_rel = 0.01  # threshold for peak detection, fraction of max
 peaks = utils.get_peaks(amp, freq, thres_rel)
 
 # plot sound amplitude versus frequency
-file_name = 'fft_{}_t{:.3f}-{:.3f}_ch{:d}.png'
+filename = 'fft_{}_t{:.3f}-{:.3f}_ch{:d}.png'
 title = '{}.wav, channel {:d}, t[s] = {:.3f} $-$ {:.3f}'
 for i, ch in enumerate(amp):
-    t_end = t_start + length / float(sample_rate)
-    title = title.format(name, i, t_start, t_end)
-    file_name_ = file_name.format(name, t_start, t_end, i)
-    vis.plot_fft(freq, ch, title, peaks=peaks[i], save=file_name_)
+    title = title.format(wav_filename, i, time_i, time_f)
+    filename_ = filename.format(os.path.splitext(wav_filename)[0],
+                                time_i, time_f, i)
+    vis.plot_fft(freq, ch, title, peaks=peaks[i], save=filename_)
