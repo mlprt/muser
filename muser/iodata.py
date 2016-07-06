@@ -583,20 +583,6 @@ def vector_to_midi_events(status, pitch_vector, velocity=0):
     return chord_events
 
 
-def to_sample_index(time, sample_rate):
-    """Return sample index closest to given time.
-
-    Args:
-        time (float): Time relative to the start of sample indexing.
-        sample_rate (int): Rate of sampling for the recording.
-
-    Returns:
-        sample_index (int): Index of the sample taken nearest to ``time``.
-    """
-    sample_index = int(time * sample_rate)
-    return sample_index
-
-
 def snd_norm(snd, factor=None):
     """ Scale elements of an array of (.wav) data from -1 to 1.
 
@@ -687,3 +673,14 @@ def unpack_midi_event(event_in):
     except NameError:
         raise ValueError("event_in not an unpackable binary representation "
                          "of a MIDI event tuple")
+
+def continuous_controller(status, data_byte1):
+    """Return a function that varies the second data byte of a MIDI event.
+
+    Args:
+        status (int): The MIDI status byte.
+        data_byte1 (int): The first MIDI data byte.
+    """
+    def event(data_byte2):
+        return (status, data_byte1, data_byte2)
+    return event

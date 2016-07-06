@@ -17,15 +17,21 @@ import pstats
 
 # User and synth parameters
 data_dir = '/tmp/muser/'
-os.makedirs(data_dir, exist_ok=True)
-synth_name = "Pianoteq"
+print_details = True
+profile_capture = True
+synth_config = dict(
+    name="pianoteq",
+    reset=(0xB0, 0, 0),
+    pedal_soft=iodata.continuous_controller(0xB0, 67),
+    pedal_sustain=iodata.continuous_controller(0xB0, 64),
+    pedal_sostenuto=iodata.continuous_controller(0xB0, 66),
+    pedal_harmonic=iodata.continuous_controller(0xB0, 69),
+)
 
 # Batch generation parameters
 chord_size = 1
 batch_size = 2
 batches = 1
-print_details = True
-profile_capture = True
 
 # data structure
 chord_dtype = np.dtype([('velocity_vector', np.uint8, iodata.N_PITCHES),
@@ -38,7 +44,7 @@ chord_batches['velocity_vector'] = utils.get_batches(chord_gen, batches,
                                                      batch_size, [chord_size])
 
 # JACK client initialization
-client = iodata.SynthInterfaceClient.from_synthname(synth_name,
+client = iodata.SynthInterfaceClient.from_synthname(synth_config['name'],
                                                     reset_event=(0xB0,0,0))
 samplerate = client.samplerate
 
