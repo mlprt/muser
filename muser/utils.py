@@ -19,6 +19,22 @@ def freq_to_hertz(samplerate):
     return to_hz
 
 
+def pitch_to_hertz(midi_pitch):
+    """Converts MIDI note number to its specified audio frequency (Hz).
+
+    Based on 440 Hz concert pitch corresponding to MIDI pitch number of 69,
+    and the doubling of frequency with each octave (12 semitones or MIDI note
+    numbers).
+
+    Args:
+        midi_pitch (int): MIDI note number.
+
+    Returns:
+        hz (float): Audio frequency specified by the MIDI note number.
+    """
+    hz = 440 * (2 ** ((midi_pitch - 69) / 12))
+    return hz
+
 def time_to_sample(time, samplerate):
     """Return sample index closest to given time.
 
