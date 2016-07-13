@@ -17,6 +17,7 @@ import struct
 import copy
 import re
 import rtmidi
+import math
 
 SND_DTYPES = {'int16': 16, np.int16: 16, 'int32': 32, np.int32: 32}
 """Data types that SciPy can import from ``.wav``"""
@@ -301,7 +302,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         self.__eventsbuffer = MIDIRingBuffer(self.blocksize)
         self._captured_sequences = []
         self._reset_event = reset_event
-        self.set_process_callback(self._process)
+        self.set_process_callback(self.__process)
 
     @classmethod
     def from_synthname(cls, synth_name, reset_event=None,
@@ -346,7 +347,7 @@ class SynthInterfaceClient(ExtendedJackClient):
                    reset_event=reset_event,
                    audiobuffer_time=audiobuffer_time)
 
-    def _process(self, frames):
+    def __process(self, frames):
         self._capture(frames)
         self._midi_write(frames)
 
@@ -485,6 +486,39 @@ class SynthInterfaceClient(ExtendedJackClient):
         """np.ndarray: Start and stop timepoints of event sequence captures."""
         return np.array([s[1] for s in self._captured_sequences])
 
+
+class Synth(ExtendedJackClient):
+    """Coordinates audio synthesis."""
+
+    def __init__(self, name="Muser Synth", channels=1):
+        super().__init__(name=name)
+        ExtendedJackClient._register_ports(self, midi_inports=channels,
+                                           outports=channels)
+        self.set_process_callback(self.__process)
+
+        self._toggle = False
+        self._pitch = 69 # 440 Hz test
+        self._t = 0
+        self._t_delta = muser.utils.pitch_to_hertz(self._pitch)/self.samplerate
+
+    def __process(self, frames):
+        self._play(frames)
+
+    def _play(self, frames):
+        buffer_ = memoryview(self.outports[0].get_buffer()).cast('f')
+        for i in range(len(buffer_)):
+            buffer_[i] = 0
+            if self._toggle:
+                buffer_[i] += math.sin(2 * math.pi * self._t)
+                self._t += self._t_delta
+                if self._t >= 1:
+                    self._t -= 1
+
+    def toggle(self):
+        self._toggle = not self._toggle
+
+    def add_synth_func(self, synth_func):
+        pass
 
 
 def jack_client_with_ports(name="Muser", inports=0, outports=0,
@@ -673,6 +707,7 @@ def unpack_midi_event(event_in):
     except NameError:
         raise ValueError("event_in not an unpackable binary representation "
                          "of a MIDI event tuple")
+
 
 def continuous_controller(status, data_byte1):
     """Return a function that varies the second data byte of a MIDI event.
