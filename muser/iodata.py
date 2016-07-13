@@ -184,7 +184,7 @@ class AudioRingBuffer(object):
 
 
 class ExtendedJackClient(jack.Client):
-    """A ``jack`` client with added management features.
+    """A JACK client with added management features.
 
     Defines a default Xrun callback that logs Xrun details, and properties
     for tracking of Xruns and access to commonly calculated quantities.
@@ -258,7 +258,7 @@ class ExtendedJackClient(jack.Client):
 
 
 class SynthInterfaceClient(ExtendedJackClient):
-    """Extended ``jack`` client with audio capture and MIDI event sending.
+    """Extended JACK client with audio capture and MIDI event sending.
 
     Uses ``jack`` ringbuffers for thread-safe exchanges of MIDI and audio data
     with the process callback.
@@ -497,22 +497,23 @@ class Synth(ExtendedJackClient):
         self.set_process_callback(self.__process)
 
         self._toggle = False
-        self._pitch = 69 # 440 Hz test
+        self._pitch = muser.utils.pitch_to_hertz(69)
         self._t = 0
-        self._t_delta = muser.utils.pitch_to_hertz(self._pitch)/self.samplerate
+        self._t_delta = 1. / self.samplerate
 
     def __process(self, frames):
         self._play(frames)
 
     def _play(self, frames):
-        buffer_ = memoryview(self.outports[0].get_buffer()).cast('f')
-        for i in range(len(buffer_)):
-            buffer_[i] = 0
-            if self._toggle:
-                buffer_[i] += math.sin(2 * math.pi * self._t)
-                self._t += self._t_delta
-                if self._t >= 1:
-                    self._t -= 1
+        buffers = [memoryview(port.get_buffer()).cast('f') for port in self.outports]
+        for i in range(self.blocksize):
+            for buffer_ in buffers:
+                buffer_[i] = 0
+                if self._toggle:
+                    buffer_[i] += math.sin(2 * math.pi * self._pitch * self._t)
+            self._t += self._t_delta
+            if self._t >= 1:
+                self._t -= 1
 
     def toggle(self):
         self._toggle = not self._toggle
