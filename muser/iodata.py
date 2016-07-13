@@ -488,7 +488,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         return np.array([s[1] for s in self._captured_sequences])
 
 
-class Synth(ExtendedJackClient):
+class SynthClient(ExtendedJackClient):
     """Coordinates audio synthesis."""
 
     def __init__(self, name="Muser Synth", channels=1):
@@ -501,10 +501,6 @@ class Synth(ExtendedJackClient):
         self._toggle = False
         self._t = itertools.cycle(
             np.linspace(0, 1, self.samplerate, endpoint=False).tolist())
-
-        #dev
-        self._pitch = muser.utils.pitch_to_hertz(69)
-        self.add_synth_function(lambda t: 0.5*math.sin(2*math.pi*self._pitch*t))
 
     def __process(self, frames):
         self._play(frames)
@@ -522,6 +518,7 @@ class Synth(ExtendedJackClient):
                         buffer_[i] += func(t)
 
     def toggle(self):
+        """Toggle audio synthesis on all channels."""
         self._toggle = not self._toggle
 
     def add_synth_function(self, synth_func, channels=None):
@@ -538,6 +535,7 @@ class Synth(ExtendedJackClient):
         else:
             for ch in channels:
                 self.synth_functions[ch].append(synth_func)
+
     def clear_synth_functions(self, channels=None):
         """Remove all generating functions from the synthesizer.
 
