@@ -12,12 +12,13 @@ import numpy as np
 import scipy.io.wavfile
 import muser.utils
 import jack
+import math
 import time
 import struct
 import copy
 import re
+import itertools
 import rtmidi
-import math
 
 SND_DTYPES = {'int16': 16, np.int16: 16, 'int32': 32, np.int32: 32}
 """Data types that SciPy can import from ``.wav``"""
@@ -495,31 +496,59 @@ class Synth(ExtendedJackClient):
         ExtendedJackClient._register_ports(self, midi_inports=channels,
                                            outports=channels)
         self.set_process_callback(self.__process)
+        self.synth_functions = [[] for ch in self.outports]
 
         self._toggle = False
+        self._t = itertools.cycle(
+            np.linspace(0, 1, self.samplerate, endpoint=False).tolist())
+
+        #dev
         self._pitch = muser.utils.pitch_to_hertz(69)
-        self._t = 0
-        self._t_delta = 1. / self.samplerate
+        self.add_synth_function(lambda t: 0.5*math.sin(2*math.pi*self._pitch*t))
 
     def __process(self, frames):
         self._play(frames)
 
     def _play(self, frames):
-        buffers = [memoryview(port.get_buffer()).cast('f') for port in self.outports]
+        buffers = [memoryview(p.get_buffer()).cast('f') for p in self.outports]
+        channels = range(len(self.outports))
         for i in range(self.blocksize):
-            for buffer_ in buffers:
+            t = next(self._t)
+            for ch in channels:
+                buffer_ = buffers[ch]
                 buffer_[i] = 0
                 if self._toggle:
-                    buffer_[i] += math.sin(2 * math.pi * self._pitch * self._t)
-            self._t += self._t_delta
-            if self._t >= 1:
-                self._t -= 1
+                    for func in self.synth_functions[ch]:
+                        buffer_[i] += func(t)
 
     def toggle(self):
         self._toggle = not self._toggle
 
-    def add_synth_func(self, synth_func):
-        pass
+    def add_synth_function(self, synth_func, channels=None):
+        """Add an audio-generating function to the synthesizer.
+
+        Args:
+            synth_func (function): Takes time and returns amplitude.
+            channels (list): Indices of channels to which to add the function.
+                If None (default), adds the function to all channels.
+        """
+        if channels is None:
+            for channel in self.synth_functions:
+                channel.append(synth_func)
+        else:
+            for ch in channels:
+                self.synth_functions[ch].append(synth_func)
+    def clear_synth_functions(self, channels=None):
+        """Remove all generating functions from the synthesizer.
+
+        Args:
+            channels (list): Indices of channels to clear of functions.
+        """
+        if channels is None:
+            self.synth_functions = [[] for ch in self.outports]
+        else:
+            for ch in channels:
+                self.synth_functions[ch] = []
 
 
 def jack_client_with_ports(name="Muser", inports=0, outports=0,
