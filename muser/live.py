@@ -577,10 +577,16 @@ def send_events(rtmidi_out, events):
     Events are sent without pause, so intended for sending series of events
     that should be heard simultaneously (chords).
 
+    A single event (not nested in a list of events) may be passed as ``events``.
+
     Args:
         rtmidi_out (rtmidi.MidiOut): The `rtmidi` output client.
-        events (List[tuple]): MIDI event data.
+        events: MIDI event data.
     """
+    try:
+        iter(events[0])
+    except TypeError:
+        events = (events,)
     for event in events:
         rtmidi_out.send_message(event)
 
@@ -589,7 +595,7 @@ def get_rtmidi_send_events(rtmidi_out):
     """ Returns an ``rtmidi`` client-specific ``send_events``. """
     def rtmidi_send_events(events):
         return send_events(rtmidi_out, events)
-    return client_send_events
+    return rtmidi_send_events
 
 
 def unpack_midi_event(event_in):

@@ -3,26 +3,27 @@
 During sends, destroys rtmidi.MidiOut interface after `KeyboardInterrupt` or `SystemExit` to preclude JACK artifacts.
 """
 
-import muser.iodata
-import muser.sequencer
+import muser.live as live
+import muser.sequencer as sequencer
+import time
 import music21
 
+loops = 10
 tempo = 90/60.  # quarter notes per second
-notes = muser.sequencer.notation_to_notes("tinynotation: C8 D# G c G D#")
+notes = sequencer.notation_to_notes("tinynotation: C8 D# G c G D#")
 durations = [tempo * 0.1] * len(notes)
 for i, note in enumerate(notes):
     note.duration.quarterLength = durations[i]
-    note.volume.velocityScalar = 0.7
-midi_notes_ = muser.iodata.to_midi_notes(notes)
-midi_notes = []
-for note in midi_notes_:
-    midi_notes.append((note[0], durations[i])) # note on and pause
-    midi_notes.append((note[1], 0)) # note off
+midi_notes = [sequencer.note_to_midi_onoff(note) for note in notes]
 
 try:
-    midi_out, _ = muser.iodata.init_midi_out()
-    send_events = muser.iodata.get_send_events(midi_out)
-    send_events(midi_notes, loop=5)
+    rtmidi_out = live.init_rtmidi_out()
+    send_events = live.get_rtmidi_send_events(rtmidi_out)
+    for i in range(loops):
+        for note, duration in zip(midi_notes, durations):
+            send_events(note[0])
+            time.sleep(duration)
+            send_events(note[1])
 
 except (KeyboardInterrupt, SystemExit):
     try:

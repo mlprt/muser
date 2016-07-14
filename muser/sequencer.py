@@ -174,6 +174,20 @@ def vector_to_midi_events(status, pitch_vector, velocity=0):
     return chord_events
 
 
+def note_to_midi_onoff(note, velocity=100):
+    """Returns MIDI note-on and note-off events for a ``music21`` note.
+
+    TODO: Velocity vectors.
+
+    Args:
+        note (music21.Note.note): The ``music21`` note to convert to events.
+    """
+    vector = note_to_pitch_vector(note)
+    note_on = vector_to_midi_events(NOTE_ON, vector, velocity=velocity)[0]
+    note_off = vector_to_midi_events(NOTE_ON, vector)[0]
+    return note_on, note_off
+
+
 def continuous_controller(status, data_byte1):
     """Return a function that varies the second data byte of a MIDI event.
 
