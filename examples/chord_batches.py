@@ -23,10 +23,10 @@ profile_capture = True
 synth_config = dict(
     name="pianoteq",
     reset=(0xB0, 0, 0),
-    pedal_soft=iodata.continuous_controller(0xB0, 67),
-    pedal_sustain=iodata.continuous_controller(0xB0, 64),
-    pedal_sostenuto=iodata.continuous_controller(0xB0, 66),
-    pedal_harmonic=iodata.continuous_controller(0xB0, 69),
+    pedal_soft=sequencer.continuous_controller(0xB0, 67),
+    pedal_sustain=sequencer.continuous_controller(0xB0, 64),
+    pedal_sostenuto=sequencer.continuous_controller(0xB0, 66),
+    pedal_harmonic=sequencer.continuous_controller(0xB0, 69),
 )
 
 # Batch generation parameters
@@ -35,7 +35,7 @@ batch_size = 2
 batches = 1
 
 # data structure
-chord_dtype = np.dtype([('velocity_vector', np.uint8, iodata.N_PITCHES),
+chord_dtype = np.dtype([('velocity_vector', np.uint8, sequencer.N_PITCHES),
                         ('captured_buffers', object)])
 chord_batches = np.ndarray([batches, batch_size], dtype=chord_dtype)
 
@@ -46,7 +46,7 @@ chord_batches['velocity_vector'] = utils.get_batches(chord_gen, batches,
 
 # JACK client initialization
 client = live.SynthInterfaceClient.from_synthname(synth_config['name'],
-                                                    reset_event=(0xB0,0,0))
+                                                  reset_event=(0xB0,0,0))
 samplerate = client.samplerate
 
 client.activate()
@@ -63,9 +63,9 @@ try:
     for batch in chord_batches:
         for chord in batch:
             velocity_vector = chord['velocity_vector']
-            notes_on = iodata.vector_to_midi_events('ON', velocity_vector,
-                                                    velocity=100)
-            notes_off = iodata.vector_to_midi_events('OFF', velocity_vector)
+            notes_on = sequencer.vector_to_midi_events('ON', velocity_vector,
+                                                       velocity=100)
+            notes_off = sequencer.vector_to_midi_events('OFF', velocity_vector)
             events_sequence = [notes_on, notes_off]
             capture_exec = ('client.capture_events(events_sequence, '
                             'blocks=(250, 25), init_blocks=25, amp_testrate=50, '

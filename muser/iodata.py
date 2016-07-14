@@ -1,4 +1,4 @@
-"""Input and output of music data, including ``.wav``.
+"""File input and output.
 
 Conversion of vector representations of notes and chords to MIDI events.
 """
@@ -9,60 +9,6 @@ import scipy.io.wavfile
 
 SND_DTYPES = {'int16': 16, np.int16: 16, 'int32': 32, np.int32: 32}
 """Data types that SciPy can import from ``.wav``"""
-
-N_PITCHES = 127
-NOTE_ON = 0x90
-NOTE_OFF = 0x80
-ALL_NOTES_OFF = 0x7B
-STATUS_ALIASES = {'NOTE_ON': NOTE_ON, 'ON': NOTE_ON,
-                  'NOTE_OFF': NOTE_OFF, 'OFF': NOTE_OFF}
-"""MIDI constants."""
-
-
-def midi_all_notes_off(midi_basic=False, pitch_range=(0, 128)):
-    """Return MIDI event(s) to turn off all notes in range.
-
-    Args:
-        midi_basic (bool): Switches MIDI event type to turn notes off.
-            Use NOTE_OFF events for each note if True, and single
-            ALL_NOTES_OFF event if False.
-        pitch_range (Tuple[int]): Range of pitches for NOTE_OFF events, if used.
-            Defaults to entire MIDI pitch range.
-    """
-    if midi_basic:
-        pitches_off = np.zeros(N_PITCHES)
-        pitches_off[slice(*pitch_range)] = 1
-        return vector_to_midi_events(NOTE_OFF, pitches_off)
-
-    else:
-        return np.array(((ALL_NOTES_OFF, 0, 0),))
-
-
-def vector_to_midi_events(status, pitch_vector, velocity=0):
-    """ Return MIDI event parameters for given pitch vector.
-
-    Status can be specified as one of the keys in ``STATUS_ALIASES``.
-
-    Args:
-        status: The status parameter of the returned events.
-        pitch_vector (np.ndarray): The hot vector of MIDI pitches in a chord.
-        velocity (int): The MIDI velocity of the chord.
-
-    Returns:
-        chord_events (np.ndarray): MIDI event parameters, one event per row.
-    """
-
-    try:
-        status = STATUS_ALIASES[status.upper()]
-    except (KeyError, AttributeError):
-        pass
-    pitches = np.flatnonzero(pitch_vector)
-    chord_events = np.zeros((3, len(pitches)), dtype=np.uint8)
-    chord_events[0] = status
-    chord_events[1] = pitches
-    chord_events[2] = velocity
-    chord_events = chord_events.transpose()
-    return chord_events
 
 
 def snd_norm(snd, factor=None):
@@ -130,40 +76,3 @@ def buffers_to_snd(buffers, stereo=True, channel_ind=None, dtype=np.int32):
     snd = snd * 2.**(SND_DTYPES[dtype] - 1)
     snd = snd.astype(dtype)
     return snd
-
-
-def unpack_midi_event(event_in):
-    """Convert received MIDI event parameters from binary to tuple form.
-
-    Args:
-        event_in: Iterable containing sample offset (in buffer) as first
-            element and binary MIDI event specifier as second element.
-
-    Returns:
-        unpacked_event (tuple): Series of integers specifying the MIDI event.
-            The first element is status and is always defined for events. This
-            tuple's length is in ``range(1, 4)``.
-    """
-    _, indata = event_in
-    for n_items in range(3, 0, -1):
-        try:
-            unpacked_event = struct.unpack('{}B'.format(n_items), indata)
-        except struct.error:
-            pass
-    try:
-        return unpacked_event
-    except NameError:
-        raise ValueError("event_in not an unpackable binary representation "
-                         "of a MIDI event tuple")
-
-
-def continuous_controller(status, data_byte1):
-    """Return a function that varies the second data byte of a MIDI event.
-
-    Args:
-        status (int): The MIDI status byte.
-        data_byte1 (int): The first MIDI data byte.
-    """
-    def event(data_byte2):
-        return (status, data_byte1, data_byte2)
-    return event

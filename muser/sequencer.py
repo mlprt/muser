@@ -1,16 +1,25 @@
-""" Music theory structures. """
+"""Music structure generation and manipulation."""
 
 import music21
 import numpy as np
 
+
+N_PITCHES = 127
 PITCH_LO = 0
 PITCH_HI = 127
-VELOCITY_LO = 0
-VELOCITY_HI = 127
-""" Absolute limits of MIDI pitch and velocity. """
 PIANO_LO = 21
 PIANO_HI = 108
-""" MIDI pitch range of 88-key piano. """
+VELOCITY_LO = 0
+VELOCITY_HI = 127
+NOTE_ON = 0x90
+NOTE_OFF = 0x80
+ALL_NOTES_OFF = 0x7B
+"""MIDI constants."""
+
+STATUS_ALIASES = {'NOTE_ON': NOTE_ON, 'ON': NOTE_ON,
+                  'NOTE_OFF': NOTE_OFF, 'OFF': NOTE_OFF}
+"""Aliases for reference to MIDI constants by string arguments."""
+
 
 def notation_to_notes(notation):
     """ Parse a notation string and return a list of Note objects.
@@ -117,3 +126,61 @@ def random_pitch_vector(pitches, pitch_range=None, velocity=None,
     pitch_vector = chord_to_pitch_vector(chord)
 
     return pitch_vector
+
+
+def midi_all_notes_off(midi_basic=False, pitch_range=(0, 128)):
+    """Return MIDI event(s) to turn off all notes in range.
+
+    Args:
+        midi_basic (bool): Switches MIDI event type to turn notes off.
+            Use NOTE_OFF events for each note if True, and single
+            ALL_NOTES_OFF event if False.
+        pitch_range (Tuple[int]): Range of pitches for NOTE_OFF events, if used.
+            Defaults to entire MIDI pitch range.
+    """
+    if midi_basic:
+        pitches_off = np.zeros(N_PITCHES)
+        pitches_off[slice(*pitch_range)] = 1
+        return vector_to_midi_events(NOTE_OFF, pitches_off)
+
+    else:
+        return np.array(((ALL_NOTES_OFF, 0, 0),))
+
+
+def vector_to_midi_events(status, pitch_vector, velocity=0):
+    """ Return MIDI event parameters for given pitch vector.
+
+    Status can be specified as one of the keys in ``STATUS_ALIASES``.
+
+    Args:
+        status: The status parameter of the returned events.
+        pitch_vector (np.ndarray): The hot vector of MIDI pitches in a chord.
+        velocity (int): The MIDI velocity of the chord.
+
+    Returns:
+        chord_events (np.ndarray): MIDI event parameters, one event per row.
+    """
+
+    try:
+        status = STATUS_ALIASES[status.upper()]
+    except (KeyError, AttributeError):
+        pass
+    pitches = np.flatnonzero(pitch_vector)
+    chord_events = np.zeros((3, len(pitches)), dtype=np.uint8)
+    chord_events[0] = status
+    chord_events[1] = pitches
+    chord_events[2] = velocity
+    chord_events = chord_events.transpose()
+    return chord_events
+
+
+def continuous_controller(status, data_byte1):
+    """Return a function that varies the second data byte of a MIDI event.
+
+    Args:
+        status (int): The MIDI status byte.
+        data_byte1 (int): The first MIDI data byte.
+    """
+    def event(data_byte2):
+        return (status, data_byte1, data_byte2)
+    return event

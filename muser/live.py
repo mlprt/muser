@@ -589,3 +589,28 @@ def get_rtmidi_send_events(rtmidi_out):
     def rtmidi_send_events(events):
         return send_events(rtmidi_out, events)
     return client_send_events
+
+
+def unpack_midi_event(event_in):
+    """Convert received MIDI event parameters from binary to tuple form.
+
+    Args:
+        event_in: Iterable containing sample offset (in buffer) as first
+            element and binary MIDI event specifier as second element.
+
+    Returns:
+        unpacked_event (tuple): Series of integers specifying the MIDI event.
+            The first element is status and is always defined for events. This
+            tuple's length is in ``range(1, 4)``.
+    """
+    _, indata = event_in
+    for n_items in range(3, 0, -1):
+        try:
+            unpacked_event = struct.unpack('{}B'.format(n_items), indata)
+        except struct.error:
+            pass
+    try:
+        return unpacked_event
+    except NameError:
+        raise ValueError("event_in not an unpackable binary representation "
+                         "of a MIDI event tuple")
