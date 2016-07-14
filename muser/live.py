@@ -7,6 +7,7 @@ capture endpoints and buffer overrun/underrun events.
 """
 import muser.utils
 import copy
+import itertools
 import re
 import struct
 import time
