@@ -3,12 +3,13 @@
 Only accounts for note on and off events and tempo changes.
 """
 
-import midi
+import muser.live as live
+import muser.sequencer as sequencer
 import time
-import muser.iodata as iodata
+import midi
 import numpy as np
 
-synth_midi_in = 'Pianoteq55:midi_in'
+synth_name = 'Pianoteq55'
 
 midi_file = '/home/mll/data/midi/goldberg-aria.mid'
 midi_pattern = midi.read_midifile(midi_file)
@@ -54,7 +55,7 @@ for event in events:
     # elif control change
     # elif program change
     elif event.name == 'Note On':
-        note = [iodata.NOTE_ON, event.pitch, event.velocity]
+        note = [sequencer.NOTE_ON, event.pitch, event.velocity]
         if bias_beats:
             note[2] *= beat_bias((event.tick % ticks_per_measure) / ticks_per_beat,
                                  timesig_)
@@ -64,17 +65,19 @@ for event in events:
         else:
             events_sequence[event.tick] = [note]
     elif event.name == 'Note Off':
-        note = (iodata.NOTE_OFF, note.pitch, 0)
+        note = (sequencer.NOTE_OFF, note.pitch, 0)
         if event.tick in events_sequence:
             events_sequence[event.tick].append(note_tuple)
         else:
             events_sequence[event.tick] = [note_tuple]
 
 # client with MIDI event sending only
-client = iodata.ExtendedClient(inports=0)
+client = live.SynthInterfaceClient.from_synthname(synth_name,
+                                                  reset_event=(0xB0,0,0),
+                                                  audiobuffer_time=5)
 client.activate()
 client.midi_outports[0].disconnect()
-client.connect(client.midi_outports[0], synth_midi_in)
+client.connect(client.midi_outports[0], client.synth_midi_inports[0])
 
 # playback: register tempo changes, send current events to synthesizer,
 #     then pause for the current duration of one tick
@@ -87,3 +90,8 @@ for tick in range(0, max(events_sequence.keys())):
     if current_events:
         client.send_events(current_events)
     time.sleep(s_per_tick)
+
+client.reset_synth()
+client.deactivate()
+client.outports.clear()
+client.close()
