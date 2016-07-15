@@ -5,7 +5,7 @@ produced during the MIDI playback and capture process.
 """
 
 import numpy as np
-import muser.iodata as iodata
+import muser.audio as audio
 import muser.live as live
 import muser.sequencer as sequencer
 import muser.utils as utils
@@ -46,14 +46,15 @@ chord_batches['velocity_vector'] = utils.get_batches(chord_gen, batches,
 
 # JACK client initialization
 client = live.SynthInterfaceClient.from_synthname(synth_config['name'],
-                                                  reset_event=(0xB0,0,0))
+                                                  reset_event=(0xB0,0,0),
+                                                  audiobuffer_time=1)
 samplerate = client.samplerate
 
 client.activate()
 try:
     # connect MIDI and audio ports of synthesizer and JACK client
     # (disconnect all first to prevent errors if auto-reconnected)
-    # TODO: Move to iodata
+    # TODO: Move to audio
     client.disconnect_all()
     client.connect(client.midi_outport, client.synth_midi_inports[0])
     for port_pair in zip(client.synth_outports, client.inports):
@@ -106,7 +107,7 @@ chord_batches.dump(pickle_path)
 
 for b, batch in enumerate(chord_batches):
     for c, chord in enumerate(batch):
-        snd = iodata.buffers_to_snd(chord['captured_buffers'])
+        snd = audio.buffers_to_snd(chord['captured_buffers'])
         wavfile_name = 'batch{}_chord{}.wav'.format(b, c)
         wavfile_path = os.path.join(batches_dir, wavfile_name)
         scipy.io.wavfile.write(wavfile_path, samplerate, snd)
