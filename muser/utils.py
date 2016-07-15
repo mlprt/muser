@@ -97,18 +97,19 @@ def if_true(toggle_attr):
     return if_true_decorator
 
 
-def record_with_timepoints(timepoints_list_attr):
+def record_with_timepoints(record_attr):
     """Returns a decorator that records entry and return times."""
     def record_with_timepoints_decorator(instance_method):
         """Append return value and entry and return times to attribute."""
         @functools.wraps(instance_method)
         def wrapper(self, *args, **kwargs):
-            start = time.time()
+            start_time = time.time()
+            start_clock = time.perf_counter()
             output = instance_method(self, *args, **kwargs)
-            stop = time.time()
-            getattr(self, timepoints_list_attr).append((output, (start, stop)))
+            stop_clock = time.perf_counter()
+            getattr(self, record_attr).append((output, start_time,
+                                               (start_clock, stop_clock)))
             return output
-
         return wrapper
     return record_with_timepoints_decorator
 
