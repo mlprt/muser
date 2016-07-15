@@ -1,4 +1,4 @@
-"""Real-time performance and capture.
+"""Real-time music performance and capture.
 
 Includes extensions of ``jack`` that allow automatic registration of multiple
 client ports, easier capturing of buffer arrays from an arbitrary number of
@@ -15,8 +15,11 @@ import jack
 import numpy as np
 import rtmidi
 
-JACK_PORT_NAMES = {'inports':'in_{}', 'outports':'out_{}',
-                   'midi_inports':'midi_in_{}', 'midi_outports':'midi_out_{}'}
+JACK_PORT_NAMES = {'inports':'in_{}',
+                   'outports':'out_{}',
+                   'midi_inports':'midi_in_{}',
+                   'midi_outports':'midi_out_{}',
+}
 """Default naming of JACK port types."""
 
 
@@ -122,7 +125,7 @@ class AudioRingBuffer(object):
         if not len(buffers) == self.channels:
             raise ValueError("Number of buffers passed for block write not "
                              "equal to number of ringbuffer channels")
-        data = b''.join(bytes(buffer_) for buffer_ in buffers)
+        data = b''.join(buffer_ for buffer_ in buffers)
         self._last.read_advance(self.block_bytes)
         self._last.write(data)
         if self._active:
@@ -274,7 +277,6 @@ class SynthInterfaceClient(ExtendedJackClient):
         super().__init__(name=name)
         ExtendedJackClient._register_ports(self, midi_outports=1,
                                            inports=len(synth_outports))
-        self.midi_outport = self.midi_outports[0]
         self._inport_enum = list(enumerate(self.inports))
         self.synth_midi_inports = synth_midi_inports
         self.synth_outports = synth_outports
@@ -342,9 +344,9 @@ class SynthInterfaceClient(ExtendedJackClient):
         self.__audiobuffer.write_block(buffers)
 
     def _midi_write(self, frames):
-        self.midi_outport.clear_buffer()
+        self.midi_outports[0].clear_buffer()
         for event in self.__eventsbuffer.read_events():
-            self.midi_outport.write_midi_event(*event)
+            self.midi_outports[0].write_midi_event(*event)
 
     def send_events(self, events):
         """Write events to the ringbuffer for reading by next process cycle.
@@ -455,6 +457,20 @@ class SynthInterfaceClient(ExtendedJackClient):
             block = self.__audiobuffer.read_block()
             blocks.append([struct.unpack(buffer_fmt, b) for b in block])
         return np.array(blocks, dtype=np.float32).swapaxes(0, 1)
+
+    def connect_synth(self, disconnect=True):
+        """Connect interface and synthesizer ports.
+
+        Args:
+            disconnect (bool): Whether to disconnect interface first.
+                Prevents ``jack.JackError`` if client was auto-connected.
+        """
+        if disconnect:
+            self.disconnect_all()
+        for midi_port_pair in zip(self.midi_outports, self.synth_midi_inports):
+            self.connect(*midi_port_pair)
+        for audio_port_pair in zip(self.synth_outports, self.inports):
+            self.connect(*audio_port_pair)
 
     def reset_synth(self):
         """Send signal to synthesizer to reset output."""

@@ -30,7 +30,7 @@ synth_config = dict(
 )
 
 # Batch generation parameters
-chord_size = 1
+chord_size = 2
 batch_size = 2
 batches = 1
 
@@ -40,7 +40,7 @@ chord_dtype = np.dtype([('velocity_vector', np.uint8, sequencer.N_PITCHES),
 chord_batches = np.ndarray([batches, batch_size], dtype=chord_dtype)
 
 # generate chord vectors
-chord_gen = sequencer.random_pitch_vector
+chord_gen = sequencer.random_velocity_vector
 chord_batches['velocity_vector'] = utils.get_batches(chord_gen, batches,
                                                      batch_size, [chord_size])
 
@@ -52,20 +52,12 @@ samplerate = client.samplerate
 
 client.activate()
 try:
-    # connect MIDI and audio ports of synthesizer and JACK client
-    # (disconnect all first to prevent errors if auto-reconnected)
-    # TODO: Move to audio
-    client.disconnect_all()
-    client.connect(client.midi_outport, client.synth_midi_inports[0])
-    for port_pair in zip(client.synth_outports, client.inports):
-        client.connect(*port_pair)
-
+    client.connect_synth()
     start_time = time.time()
     for batch in chord_batches:
         for chord in batch:
             velocity_vector = chord['velocity_vector']
-            notes_on = sequencer.vector_to_midi_events('ON', velocity_vector,
-                                                       velocity=100)
+            notes_on = sequencer.vector_to_midi_events('ON', velocity_vector)
             notes_off = sequencer.vector_to_midi_events('OFF', velocity_vector)
             events_sequence = [notes_on, notes_off]
             capture_exec = ('client.capture_events(events_sequence, '
