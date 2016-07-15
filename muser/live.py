@@ -189,7 +189,7 @@ class ExtendedJackClient(jack.Client):
 
     def _handle_xrun(self, delay_usecs):
         # does not need to be suitable for real-time execution
-        self._xruns.append((time.time(), delay_usecs))
+        self._xruns.append((time.perf_counter(), delay_usecs))
         self._n_xruns += 1
 
     @staticmethod
@@ -287,7 +287,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         self.__audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
                                              blocks=audiobuffer_blocks)
         self.__eventsbuffer = MIDIRingBuffer(self.blocksize)
-        self._captured_sequences = []
+        self._capture_log = []
         self._reset_event = reset_event
         self.set_process_callback(self.__process)
 
@@ -358,8 +358,8 @@ class SynthInterfaceClient(ExtendedJackClient):
         for event in events:
             self.__eventsbuffer.write_event(offset, tuple(event))
 
-    def capture_events(self, events_sequence, send_events=None, blocks=None,
-                       init_blocks=0, amp_testrate=25, amp_rel_thres=1e-4,
+    def capture_events(self, events_sequence, times=None, init_time=0,
+                       test_rate=25, amp_rel_thres=1e-4,
                        max_xruns=0, attempts=10, cpu_load_thres=15):
         """Send groups of MIDI events in series and capture the result.
 
@@ -367,42 +367,37 @@ class SynthInterfaceClient(ExtendedJackClient):
             events_sequence (List[np.ndarray]): Groups of MIDI events to send.
                 After each group is sent, a condition is awaited before sending
                 the next, or stopping audio capture.
-            send_events (function): Accepts an iterable of MIDI events and
-                sends them to the synthesizer.
-            blocks (list): Number of JACK blocks to record for each set of
+            times (Iterable[float]): Duration of recording for each set of
                 events. Wherever ``None``, records the current events until
                 the audio amplitude decreases past a threshold.
-            init_blocks (int): Number of JACK blocks to record before sending
-                the first set of events.
-            amp_testrate (float): Frequency (Hz) of volume testing to establish
-                a relative volume threshold, and to continue to the next set of
-                events (or capture end) upon passing it. If too low, can cause
-                premature continuation; too high, inaccuracy due to low
-                resolution in time.
+            init_time (float): Time to record before sending first event set.
+            test_rate (float): Frequency (Hz) of sequence continuance tests.
+                Lower values will allow the capture to observe ``times`` more
+                precisely and more accurately estimate the max. amplitude,
+                but too low can cause premature continues or Xruns.
             amp_rel_thres (float): Fraction of the max amplitude (established
                 during volume testing) at which to set the threshold for
                 continuation.
-            max_xruns (int): Max xruns to allow before re-attempting capture
-            attempts (int): Number of xrun-prompted re-attempts before aborting
-            cpu_load_thres (float): Re-attempt capture after CPU load reported
-                by JACK drops below this threshold; 15% by default.
+            max_xruns (int): Max xruns to allow before re-attempting capture.
+            attempts (int): Number of Xrun-prompted re-attempts before abort.
+            cpu_load_thres (float): Wait for CPU load reported by JACK to
+                drop below this threshold before re-attempting capture.
                 Higher CPU load is associated with increased chance of Xruns.
         """
         try:
-            if not len(blocks) == len(events_sequence):
+            if not len(times) == len(events_sequence):
                 raise ValueError("List of numbers of blocks to record was "
                                  "given instead of a constant, but its length "
                                  "does not match that of events sequence")
         except TypeError:
-            blocks = [blocks] * len(events_sequence)
-        if send_events is None:
-            send_events = self.send_events
-        amp_testperiod = 1. / amp_testrate
-
+            times = [times] * len(events_sequence)
+        test_period = 1. / test_rate
+        # pause briefly to ensure inter-capture xruns are logged
+        time.sleep(0.1)
         for a in range(attempts):
-            capture_args = (events_sequence, send_events, blocks, init_blocks,
-                            amp_testperiod, amp_rel_thres,
-                            self.n_xruns, max_xruns)
+            capture_args = (events_sequence, times, init_time, test_period,
+                            amp_rel_thres, self.n_xruns, max_xruns)
+            self.reset_synth()
             self.__audiobuffer.activate()
             attempt = self._capture_loop(*capture_args)
             self.__audiobuffer.deactivate()
@@ -411,23 +406,21 @@ class SynthInterfaceClient(ExtendedJackClient):
                 self.__audiobuffer.reset()
                 while self.cpu_load() > cpu_load_thres:
                     pass
-                continue
             else:
                 return
 
-    @muser.utils.record_with_timepoints('_captured_sequences')
-    def _capture_loop(self, events_sequence, send_events, blocks, init_blocks,
-                      amp_testperiod, amp_rel_thres, init_xruns, max_xruns):
-        while self.__audiobuffer.n < init_blocks:
-            pass
+    @muser.utils.log_with_timepoints('_capture_log')
+    def _capture_loop(self, events_sequence, times, init_time,
+                      test_period, amp_rel_thres, init_xruns, max_xruns):
+        start_clock = time.perf_counter()
+        while (time.perf_counter() - start_clock) < init_time:
+            time.sleep(test_period)
         for e, events in enumerate(events_sequence):
-            send_events(events)
-            if blocks[e] is None:
-                # wait for amplitude to fall below threshold
-                amp_max = 0
-                amp_thres = 0
+            self.send_events(events)
+            if times[e] is None:
+                amp_max, amp_thres = 0, 0
                 while True:
-                    time.sleep(amp_testperiod)
+                    time.sleep(test_period)
                     if (self.n_xruns - init_xruns) > max_xruns:
                         return
                     last = struct.unpack(self.__audiobuffer.buffers_format,
@@ -439,10 +432,11 @@ class SynthInterfaceClient(ExtendedJackClient):
                     if not last_max > amp_thres:
                         break
             else:
-                n = self.__audiobuffer.n
-                while (self.__audiobuffer.n - n) < blocks[e]:
+                event_start_clock = time.perf_counter()
+                while (time.perf_counter() - event_start_clock) < times[e]:
                     if (self.n_xruns - init_xruns) > max_xruns:
                         return
+                    time.sleep(test_period)
         return events_sequence
 
     def drop_captured(self):
@@ -478,14 +472,14 @@ class SynthInterfaceClient(ExtendedJackClient):
             self.send_events((self._reset_event,))
 
     @property
-    def captured_sequences(self):
+    def capture_log(self):
         """list: Captured event sequences and their timepoints."""
-        return copy.deepcopy(self._captured_sequences)
+        return copy.deepcopy(self._capture_log)
 
     @property
-    def capture_timepoints(self):
-        """np.ndarray: Start and stop timepoints of event sequence captures."""
-        return np.array([s[1] for s in self._captured_sequences])
+    def capture_times(self):
+        """np.ndarray: Start and stop clock of event sequence captures."""
+        return np.array([s[1:] for s in self._capture_log])
 
 
 class SynthClient(ExtendedJackClient):

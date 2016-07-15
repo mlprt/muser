@@ -53,7 +53,7 @@ samplerate = client.samplerate
 client.activate()
 try:
     client.connect_synth()
-    start_time = time.time()
+    start_clock = time.perf_counter()
     for batch in chord_batches:
         for chord in batch:
             velocity_vector = chord['velocity_vector']
@@ -61,7 +61,7 @@ try:
             notes_off = sequencer.vector_to_midi_events('OFF', velocity_vector)
             events_sequence = [notes_on, notes_off]
             capture_exec = ('client.capture_events(events_sequence, '
-                            'blocks=(250, 25), init_blocks=25, amp_testrate=50, '
+                            'times=(5, 0.25), init_time=0.25, test_rate=50, '
                             'max_xruns=1)')
             if profile_capture:
                 cProfile.run(capture_exec, 'capture_events-profile')
@@ -69,27 +69,28 @@ try:
                 exec(capture_exec)
             chord['captured_buffers'] = client.drop_captured()
 
-    if profile_capture:
-        profile = pstats.Stats('capture_events-profile').strip_dirs()
-        profile.strip_dirs().sort_stats('time').print_stats(10)
-
-    if print_details:
-        print("{} Xruns".format(client.n_xruns))
-        for xrun in (client.xruns - start_time):
-            print('{:.4f} s'.format(xrun[0]))
-        print("\nCapture timepoints")
-        print('{:>10}  \t{:>10}'.format('Start', 'Stop'))
-        for item in client.captured_sequences:
-            times = np.array(item[1]) - start_time
-            xrun = " (Xrun)" if item[0] is None else ''
-            print("{:10.4f} s\t{:10.4f} s {}".format(times[0], times[1], xrun))
+    client.dismantle()
 
 except (KeyboardInterrupt, SystemExit):
     print('\nUser or system interrupt, dismantling JACK clients!')
     client.dismantle()
     raise
 
-client.dismantle()
+# only logs the last-captured profile (?)
+if profile_capture:
+    profile = pstats.Stats('capture_events-profile').strip_dirs()
+    profile.strip_dirs().sort_stats('time').print_stats(10)
+
+if print_details:
+    print("{} Xruns".format(client.n_xruns))
+    for xrun in (client.xruns - start_clock):
+        print('{:.4f} s'.format(xrun[0]))
+    print("\nCapture timepoints")
+    print('{:>10}  \t{:>10}'.format('Start', 'Stop'))
+    for item in client.capture_log:
+        times = np.array(item[2]) - start_clock
+        xrun = " (Xrun)" if item[0] is None else ''
+        print("{:10.4f} s\t{:10.4f} s {}".format(times[0], times[1], xrun))
 
 # store chord batches
 batches_dir = os.path.join(data_dir, 'chord_batches')
