@@ -362,19 +362,14 @@ class SynthInterfaceClient(ExtendedJackClient):
         for event in events:
             self.__eventsbuffer.write_event(offset, tuple(event))
 
-    def capture_events(self, events_sequence, times=None, init_time=0,
-                       test_rate=25, amp_rel_thres=1e-4,
+    def capture_events(self, events_sequence, test_rate=25, amp_rel_thres=1e-4,
                        max_xruns=0, attempts=10, cpu_load_thres=15):
         """Send groups of MIDI events in series and capture the result.
 
         Args:
-            events_sequence (List[np.ndarray]): Groups of MIDI events to send.
+            event_groups (List[dict]): Groups of MIDI events to send.
                 After each group is sent, a condition is awaited before sending
                 the next, or stopping audio capture.
-            times (Iterable[float]): Duration of recording for each set of
-                events. Wherever ``None``, records the current events until
-                the audio amplitude decreases past a threshold.
-            init_time (float): Time to record before sending first event set.
             test_rate (float): Frequency (Hz) of sequence continuance tests.
                 Lower values will allow the capture to observe ``times`` more
                 precisely and more accurately estimate the max. amplitude,
@@ -388,19 +383,12 @@ class SynthInterfaceClient(ExtendedJackClient):
                 drop below this threshold before re-attempting capture.
                 Higher CPU load is associated with increased chance of Xruns.
         """
-        try:
-            if not len(times) == len(events_sequence):
-                raise ValueError("List of numbers of blocks to record was "
-                                 "given instead of a constant, but its length "
-                                 "does not match that of events sequence")
-        except TypeError:
-            times = [times] * len(events_sequence)
-        test_period = 1. / test_rate
+        test_period = 1.0 / test_rate
         # pause briefly to ensure inter-capture xruns are logged
         time.sleep(0.1)
         for _ in range(attempts):
-            capture_args = (events_sequence, times, init_time, test_period,
-                            amp_rel_thres, self.n_xruns, max_xruns)
+            capture_args = (events_sequence, test_period,
+                            amp_rel_thres, max_xruns)
             self.__audiobuffer.activate()
             attempt = self._capture_loop(*capture_args)
             self.__audiobuffer.deactivate()
@@ -413,34 +401,34 @@ class SynthInterfaceClient(ExtendedJackClient):
 
     @muser.utils.prepost_method('reset_synth')
     @muser.utils.log_with_timepoints('_capture_log')
-    def _capture_loop(self, events_sequence, times, init_time,
-                      test_period, amp_rel_thres, init_xruns, max_xruns):
-        start_clock = time.perf_counter()
-        while (time.perf_counter() - start_clock) < init_time:
-            time.sleep(test_period)
-        for i_ev, events in enumerate(events_sequence):
-            self.send_events(events)
-            if times[i_ev] is None:
-                amp_max, amp_thres = 0, 0
-                while True:
-                    time.sleep(test_period)
-                    if (self.n_xruns - init_xruns) > max_xruns:
-                        return
-                    last = struct.unpack(self.__audiobuffer.buffer_format,
-                                         self.__audiobuffer.last)
-                    last_max = max(last)
-                    if last_max > amp_max:
-                        amp_max = last_max
-                        amp_thres = amp_max * amp_rel_thres
-                    if not last_max > amp_thres:
-                        break
-            else:
-                event_start_clock = time.perf_counter()
-                while (time.perf_counter() - event_start_clock) < times[i_ev]:
-                    if (self.n_xruns - init_xruns) > max_xruns:
-                        return
-                    time.sleep(test_period)
-        return events_sequence
+    def _capture_loop(self, event_groups, test_period, amp_rel_thres,
+                      max_xruns):
+        init_xruns = self.n_xruns
+        for group in event_groups:
+            group_start = time.perf_counter()
+            if group['events'] is not None:
+                self.send_events(group['events'])
+                if group['duration'] is None:
+                    amp_max, amp_thres = 0, 0
+                    while True:
+                        time.sleep(test_period)
+                        if (self.n_xruns - init_xruns) > max_xruns:
+                            return
+                        last = struct.unpack(self.__audiobuffer.buffer_format,
+                                             self.__audiobuffer.last)
+                        last_max = max(last)
+                        if last_max > amp_max:
+                            amp_max = last_max
+                            amp_thres = amp_max * amp_rel_thres
+                            if not last_max > amp_thres:
+                                break
+                    continue
+
+            while (time.perf_counter() - group_start) < group['duration']:
+                if (self.n_xruns - init_xruns) > max_xruns:
+                    return
+                time.sleep(test_period)
+        return event_groups
 
     def drop_captured(self):
         """Return the audio data captured in the ringbuffer.

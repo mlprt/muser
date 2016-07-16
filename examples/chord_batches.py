@@ -30,24 +30,24 @@ synth_config = dict(
 )
 
 # Batch generation parameters
-chord_size = 2
-batch_size = 2
+chord_size = 10
+batch_size = 5
 batches = 1
 
-# data structure
+# chord batches structure and random generation
 chord_dtype = np.dtype([('velocity_vector', np.uint8, sequencer.N_PITCHES),
                         ('captured_buffers', object)])
 chord_batches = np.ndarray([batches, batch_size], dtype=chord_dtype)
-
-# generate chord vectors
 chord_gen = sequencer.random_velocity_vector
 chord_batches['velocity_vector'] = utils.get_batches(chord_gen, batches,
                                                      batch_size, [chord_size])
 
 # JACK client initialization
-client = live.SynthInterfaceClient.from_synthname(synth_config['name'],
-                                                  reset_event=(0xB0,0,0),
-                                                  audiobuffer_time=1)
+client = live.SynthInterfaceClient.from_synthname(
+    synth_name=synth_config['name'],
+    reset_event=synth_config['reset'],
+    audiobuffer_time=1,
+)
 samplerate = client.samplerate
 
 client.activate()
@@ -57,12 +57,13 @@ try:
     for batch in chord_batches:
         for chord in batch:
             velocity_vector = chord['velocity_vector']
+            init_pause = {'events': None, 'duration': 0.5}
             notes_on = sequencer.vector_to_midi_events('ON', velocity_vector)
+            on_events = {'events': notes_on, 'duration': 2.0}
             notes_off = sequencer.vector_to_midi_events('OFF', velocity_vector)
-            events_sequence = [notes_on, notes_off]
-            capture_exec = ('client.capture_events(events_sequence, '
-                            'times=(5, 0.25), init_time=0.25, test_rate=50, '
-                            'max_xruns=1)')
+            off_events = {'events': notes_off, 'duration': 0.25}
+            events_sequence = [init_pause, on_events, off_events]
+            capture_exec = ('client.capture_events(events_sequence)')
             if profile_capture:
                 cProfile.run(capture_exec, 'capture_events-profile')
             else:
