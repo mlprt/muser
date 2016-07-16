@@ -5,20 +5,22 @@ client ports, easier capturing of buffer arrays from an arbitrary number of
 inports, sending of sequences of events to capture, and tracking times of
 capture endpoints and buffer overrun/underrun events.
 """
-import muser.utils
+
 import copy
 import itertools
 import re
 import struct
 import time
+import muser.utils
 import jack
 import numpy as np
 import rtmidi
 
-JACK_PORT_NAMES = {'inports':'in_{}',
-                   'outports':'out_{}',
-                   'midi_inports':'midi_in_{}',
-                   'midi_outports':'midi_out_{}',
+JACK_PORT_NAMES = {
+    'inports':'in_{}',
+    'outports':'out_{}',
+    'midi_inports':'midi_in_{}',
+    'midi_outports':'midi_out_{}',
 }
 """Default naming of JACK port types."""
 
@@ -166,9 +168,10 @@ class AudioRingBuffer(object):
         return self._last.peek(self.block_bytes)
 
     @property
-    def n(self):
+    def n_blocks(self):
         """int: Number of blocks stored in ringbuffer."""
-        return (self._ringbuffer.read_space // self.block_bytes)
+        n_blocks = self._ringbuffer.read_space // self.block_bytes
+        return n_blocks
 
 
 class ExtendedJackClient(jack.Client):
@@ -205,10 +208,10 @@ class ExtendedJackClient(jack.Client):
             **port_args: Keys give port type, values give quantity to register.
                 Keys of ``port_args`` must be key subset of ``JACK_PORT_NAMES``
         """
-        for port_type, n in port_args.items():
+        for port_type, n_ports in port_args.items():
             ports = getattr(jack_client, port_type)
-            for p in range(n):
-                ports.register(JACK_PORT_NAMES[port_type].format(p))
+            for p_i in range(n_ports):
+                ports.register(JACK_PORT_NAMES[port_type].format(p_i))
 
     def disconnect_all(self):
         """Disconnect all connections of ports belonging to instance."""
@@ -237,12 +240,13 @@ class ExtendedJackClient(jack.Client):
     @property
     def max_offset(self):
         """int: The largest offset for a buffer frame."""
-        return (self.blocksize - 1)
+        return self.blocksize - 1
 
     @property
     def blocktime(self):
         """float: The number of seconds in one JACK buffer."""
-        return (self.blocksize / self.samplerate)
+        blocktime = self.blocksize / self.samplerate
+        return blocktime
 
 
 class SynthInterfaceClient(ExtendedJackClient):
@@ -338,12 +342,12 @@ class SynthInterfaceClient(ExtendedJackClient):
         self._capture(frames)
         self._midi_write(frames)
 
-    def _capture(self, frames):
+    def _capture(self, dummy):
         """The capture process. Runs continuously with activated client."""
         buffers = [port[1].get_buffer() for port in self._inport_enum]
         self.__audiobuffer.write_block(buffers)
 
-    def _midi_write(self, frames):
+    def _midi_write(self, dummy):
         self.midi_outports[0].clear_buffer()
         for event in self.__eventsbuffer.read_events():
             self.midi_outports[0].write_midi_event(*event)
@@ -394,14 +398,12 @@ class SynthInterfaceClient(ExtendedJackClient):
         test_period = 1. / test_rate
         # pause briefly to ensure inter-capture xruns are logged
         time.sleep(0.1)
-        for a in range(attempts):
+        for _ in range(attempts):
             capture_args = (events_sequence, times, init_time, test_period,
                             amp_rel_thres, self.n_xruns, max_xruns)
-            self.reset_synth()
             self.__audiobuffer.activate()
             attempt = self._capture_loop(*capture_args)
             self.__audiobuffer.deactivate()
-            self.reset_synth()
             if attempt is None:
                 self.__audiobuffer.reset()
                 while self.cpu_load() > cpu_load_thres:
@@ -409,21 +411,22 @@ class SynthInterfaceClient(ExtendedJackClient):
             else:
                 return
 
+    @muser.utils.prepost_method('reset_synth')
     @muser.utils.log_with_timepoints('_capture_log')
     def _capture_loop(self, events_sequence, times, init_time,
                       test_period, amp_rel_thres, init_xruns, max_xruns):
         start_clock = time.perf_counter()
         while (time.perf_counter() - start_clock) < init_time:
             time.sleep(test_period)
-        for e, events in enumerate(events_sequence):
+        for i_ev, events in enumerate(events_sequence):
             self.send_events(events)
-            if times[e] is None:
+            if times[i_ev] is None:
                 amp_max, amp_thres = 0, 0
                 while True:
                     time.sleep(test_period)
                     if (self.n_xruns - init_xruns) > max_xruns:
                         return
-                    last = struct.unpack(self.__audiobuffer.buffers_format,
+                    last = struct.unpack(self.__audiobuffer.buffer_format,
                                          self.__audiobuffer.last)
                     last_max = max(last)
                     if last_max > amp_max:
@@ -433,7 +436,7 @@ class SynthInterfaceClient(ExtendedJackClient):
                         break
             else:
                 event_start_clock = time.perf_counter()
-                while (time.perf_counter() - event_start_clock) < times[e]:
+                while (time.perf_counter() - event_start_clock) < times[i_ev]:
                     if (self.n_xruns - init_xruns) > max_xruns:
                         return
                     time.sleep(test_period)
@@ -443,14 +446,15 @@ class SynthInterfaceClient(ExtendedJackClient):
         """Return the audio data captured in the ringbuffer.
 
         Returns:
-            np.ndarray: JACK audio
+            captured (np.ndarray): JACK audio
         """
         blocks = []
         buffer_fmt = self.__audiobuffer.buffer_format
-        while self.__audiobuffer.n:
+        while self.__audiobuffer.n_blocks:
             block = self.__audiobuffer.read_block()
             blocks.append([struct.unpack(buffer_fmt, b) for b in block])
-        return np.array(blocks, dtype=np.float32).swapaxes(0, 1)
+        captured = np.array(blocks, dtype=np.float32).swapaxes(0, 1)
+        return captured
 
     def connect_synth(self, disconnect=True):
         """Connect interface and synthesizer ports.
@@ -497,59 +501,59 @@ class SynthClient(ExtendedJackClient):
         self.channel_range = range(len(self.outports))
 
         self._toggle = False
-        self._t = itertools.cycle(
-            np.linspace(0, 1, self.samplerate, endpoint=False).tolist())
+        self._time = itertools.cycle(np.linspace(0, 1, self.samplerate,
+                                                 endpoint=False).tolist())
 
     def __process(self, frames):
         self._play(frames)
 
-    def _play(self, frames):
+    def _play(self, dummy):
         buffers = [memoryview(p.get_buffer()).cast('f') for p in self.outports]
         if self._toggle:
-            for i in range(self.blocksize):
-                t = next(self._t)
-                for ch in self.channel_range:
-                    buffer_ = buffers[ch]
-                    buffer_[i] = 0
-                    for func in self.synth_functions[ch]:
-                        buffer_[i] += func(t)
+            for i_frame in range(self.blocksize):
+                time_i = next(self._time)
+                for i_chan in self.channel_range:
+                    buffer_ = buffers[i_chan]
+                    buffer_[i_frame] = 0
+                    for func in self.synth_functions[i_chan]:
+                        buffer_[i_frame] += func(time_i)
         else:
-            for i in range(self.blocksize):
-                for ch in self.channel_range:
-                    buffer_ = buffers[ch]
-                    buffer_[i] = 0
+            for i_frame in range(self.blocksize):
+                for i_chan in self.channel_range:
+                    buffer_ = buffers[i_chan]
+                    buffer_[i_frame] = 0
 
 
     def toggle(self):
         """Toggle audio synthesis on all channels."""
         self._toggle = not self._toggle
 
-    def add_synth_function(self, synth_func, channels=None):
+    def add_synth_function(self, synth_func, channels_idx=None):
         """Add an audio-generating function to the synthesizer.
 
         Args:
             synth_func (function): Takes time and returns amplitude.
-            channels (list): Indices of channels to which to add the function.
-                If None (default), adds the function to all channels.
+            channels_idx (list): Indices of channels to which to add.
+                If ``None`` (default), adds the function to all channels.
         """
-        if channels is None:
+        if channels_idx is None:
             for channel in self.synth_functions:
                 channel.append(synth_func)
         else:
-            for ch in channels:
-                self.synth_functions[ch].append(synth_func)
+            for i_chan in channels_idx:
+                self.synth_functions[i_chan].append(synth_func)
 
-    def clear_synth_functions(self, channels=None):
+    def clear_synth_functions(self, channels_idx=None):
         """Remove all generating functions from the synthesizer.
 
         Args:
-            channels (list): Indices of channels to clear of functions.
+            channels_idx (list): Indices of channels to clear of functions.
         """
-        if channels is None:
+        if channels_idx is None:
             self.synth_functions = [[] for ch in self.outports]
         else:
-            for ch in channels:
-                self.synth_functions[ch] = []
+            for i_chan in channels_idx:
+                self.synth_functions[i_chan] = []
 
 
 def jack_client_with_ports(name="Muser", inports=0, outports=0,
@@ -602,7 +606,7 @@ def send_events(rtmidi_out, events):
 
 
 def get_rtmidi_send_events(rtmidi_out):
-    """ Returns an ``rtmidi`` client-specific ``send_events``. """
+    """Returns a client-specific ``send_events``."""
     def rtmidi_send_events(events):
         return send_events(rtmidi_out, events)
     return rtmidi_send_events
