@@ -106,12 +106,41 @@ def log_with_timepoints(record_attr):
             entry_clock = time.perf_counter()
             output = instance_method(self, *args, **kwargs)
             exit_clock = time.perf_counter()
-            log = {'output': output, 'entry_abs': entry_abs,
-                   'entry_clock': entry_clock, 'exit_clock': exit_clock}
+            log = {'output': output, 'enter_abs': entry_abs,
+                   'enter_clock': entry_clock, 'exit_clock': exit_clock}
             getattr(self, record_attr).append(log)
             return output
         return wrapper
     return log_with_timepoints_decorator
+
+
+def print_logs_entryexit(logs, output_labels=None, ref_clock=0,
+                         header=('Enter [s]', 'Exit [s]'), figs=(10, 4)):
+    """Print list of logged function entry and exit times.
+
+    Args:
+        logs (List[dict]): Call logs as returned by ``log_with_timepoints``.
+        output_labels (dict): Print labels for logs with output equal to keys.
+        ref_clock (float): Process clock for relativizing log times.
+            Should be the result of a recent call to ``time.perf_counter()``.
+        header (iterable): Column headers for printout.
+        figs (iterable): Number of total figures and decimals to report.
+    """
+    if output_labels is None:
+        output_labels = {}
+    title_form = '{{}}{{:>{figs}}}{{:>{figs}}}'.format(figs=figs[0])
+    record_form = '{{:{figs}.{decs}f}}{{:{figs}.{decs}f}} {{}}'.format(
+        figs=figs[0], decs=figs[1])
+    print(title_form.format('\n', *header))
+    for log in logs:
+        call_entry = log['enter_clock'] - ref_clock
+        call_exit = log['exit_clock'] - ref_clock
+        try:
+            output_label = output_labels[log['output']]
+        except (TypeError, KeyError):
+            output_label = ''
+        print(record_form.format(call_entry, call_exit, output_label))
+    print('\n')
 
 
 def prepost_method(method_name, *method_args, **method_kwargs):

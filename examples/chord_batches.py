@@ -32,8 +32,8 @@ synth_config = dict(
 )
 
 # Batch generation parameters
-chord_size = 10
-batch_size = 5
+chord_size = 3
+batch_size = 2
 batches = 1
 
 # chord batches structure and random generation
@@ -61,7 +61,7 @@ try:
             init_pause = {'events': None, 'duration': 0.5}
             velocity_vector = chord['velocity_vector']
             notes_on = sequencer.vector_to_midi_events('ON', velocity_vector)
-            on_events = {'events': notes_on, 'duration': 2.0}
+            on_events = {'events': notes_on, 'duration': 0.5}
             notes_off = sequencer.vector_to_midi_events('OFF', velocity_vector)
             off_events = {'events': notes_off, 'duration': 0.25}
             event_groups = [init_pause, on_events, off_events]
@@ -81,20 +81,20 @@ except (KeyboardInterrupt, SystemExit):
     raise
 
 if profile_capture:
-    profile = pstats.Stats(profile_name.format(0, 0)).strip_dirs()
+    name = os.path.join(data_dir, profile_name.format(0, 0))
+    profile = pstats.Stats(name).strip_dirs()
     profile.strip_dirs().sort_stats('time').print_stats(10)
 
 if print_details:
-    print("{} Xruns".format(client.n_xruns))
+    xrun_print_end = ', at:' if client.n_xruns else '.'
+    print("{} total Xruns{}".format(client.n_xruns, xrun_print_end))
     for xrun in client.xruns - start_clock:
         print('{:.4f} s'.format(xrun[0]))
-    print("\nCapture timepoints")
-    print('{:>10}  \t{:>10}'.format('Start', 'Stop'))
-    for log in client.capture_log:
-        group_start = log['entry_clock'] - start_clock
-        group_end = log['exit_clock'] - start_clock
-        xrun = " (Xrun)" if log['output'] is None else ''
-        print("{:10.4f} s\t{:10.4f} s {}".format(group_start, group_end, xrun))
+    print("\nCapture timepoints (seconds):")
+    utils.print_logs_entryexit(client.capture_log, output_labels={None: 'Xrun'},
+                               ref_clock=start_clock,
+                               header=('Start', 'End'), figs=(10, 4))
+
 
 # store chord batches
 pickle_path = os.path.join(data_dir, 'chord_batches.pickle')
