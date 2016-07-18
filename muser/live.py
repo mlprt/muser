@@ -17,12 +17,12 @@ import rtmidi
 
 import muser.utils
 
-JACK_PORT_NAMES = {
-    'inports':'in_{}',
-    'outports':'out_{}',
-    'midi_inports':'midi_in_{}',
-    'midi_outports':'midi_out_{}',
-}
+JACK_PORT_NAMES = dict(
+    inports='in_{}',
+    outports='out_{}',
+    midi_inports='midi_in_{}',
+    midi_outports='midi_out_{}',
+)
 """Default naming of JACK port types."""
 
 
@@ -32,7 +32,7 @@ class MIDIRingBuffer(object):
     Writing to a ringbuffer decreases available write space; reading increases.
 
     Attributes:
-        EVENT_FORMAT (str): The ``struct`` (C) format for each event.
+        EVENT_FORMAT (str): The ``struct`` format for each event.
         EVENT_SIZE (int): Number of bytes written to the ringbuffer per event.
 
     Args:
@@ -115,7 +115,6 @@ class AudioRingBuffer(object):
         self.channels = channels
 
         self._ringbuffer = jack.RingBuffer(blocks * self.block_bytes)
-        self._last = jack.RingBuffer(self.block_bytes + 1)
         self._active = False
 
     def write_block(self, buffers):
@@ -128,10 +127,8 @@ class AudioRingBuffer(object):
         if not len(buffers) == self.channels:
             raise ValueError("Number of buffers passed for block write not "
                              "equal to number of ringbuffer channels")
-        data = b''.join(buffer_ for buffer_ in buffers)
-        self._last.read_advance(self.block_bytes)
-        self._last.write(data)
         if self._active:
+            data = b''.join(buffer_ for buffer_ in buffers)
             self._ringbuffer.write(data)
 
     def read_block(self):
@@ -162,11 +159,10 @@ class AudioRingBuffer(object):
         return self._active
 
     @property
-    def last(self):
-        """buffer: Copy of all channels of last stored block."""
-        while not self._last.read_space:
-            pass
-        return self._last.peek(self.block_bytes)
+    def last_block(self):
+        """memoryview: Copy of last stored block."""
+        last_block = self._ringbuffer.read_buffers[0][-self.block_bytes:]
+        return memoryview(bytes(last_block)).cast(self.FRAME_FORMAT)
 
     @property
     def n_blocks(self):
@@ -363,9 +359,9 @@ class SynthInterfaceClient(ExtendedJackClient):
                 Lower values will allow the capture to observe ``times`` more
                 precisely and more accurately estimate the max. amplitude,
                 but too low can cause premature continues or Xruns.
-            amp_rel_thres (float): Fraction of the max amplitude (established
-                during volume testing) at which to set the threshold for
-                continuation.
+            amp_rel_thres (float): Fraction of the max amplitude (estimated
+                during playback by sampling at ``test_rate``) at which to set
+                the threshold for continuation to the next group of events.
             max_xruns (int): Max xruns to allow before re-attempting capture.
             attempts (int): Number of Xrun-prompted re-attempts before abort.
             cpu_load_thres (float): Wait for CPU load reported by JACK to
@@ -392,32 +388,42 @@ class SynthInterfaceClient(ExtendedJackClient):
     @muser.utils.log_with_timepoints('_capture_log')
     def _capture_loop(self, event_groups, test_period, amp_rel_thres,
                       max_xruns):
+        """The event-sending and capturing occurs here, after prep."""
         init_xruns = self.n_xruns
         for group in event_groups:
             group_start = time.perf_counter()
             if group['events'] is not None:
                 self.send_events(group['events'])
                 if group['duration'] is None:
-                    amp_max, amp_thres = 0, 0
-                    while True:
-                        time.sleep(test_period)
-                        if (self.n_xruns - init_xruns) > max_xruns:
-                            return
-                        last = struct.unpack(self.__audiobuffer.buffer_format,
-                                             self.__audiobuffer.last)
-                        last_max = max(last)
-                        if last_max > amp_max:
-                            amp_max = last_max
-                            amp_thres = amp_max * amp_rel_thres
-                            if not last_max > amp_thres:
-                                break
+                    self._await_threshold(test_period, amp_rel_thres,
+                                          init_xruns, max_xruns)
                     continue
-
+            # if group has no events, or a specified duration
             while (time.perf_counter() - group_start) < group['duration']:
                 if (self.n_xruns - init_xruns) > max_xruns:
                     return
                 time.sleep(test_period)
         return event_groups
+
+    def _await_threshold(self, test_period, amp_rel_thres, init_xruns,
+                         max_xruns):
+        """Wait for audio amplitude to fall below a threshold.
+
+        Estimates the maximum amplitude; the threshold is a fraction of it
+        defined by ``amp_rel_thres``.
+        """
+        amp_max, amp_thres = 0, 0
+        while True:
+            if (self.n_xruns - init_xruns) > max_xruns:
+                return
+            last_block_max = max(self.__audiobuffer.last_block)
+            print(last_block_max)
+            if last_block_max > amp_max:
+                amp_max = last_block_max
+                amp_thres = amp_max * amp_rel_thres
+            if not last_block_max > amp_thres:
+                break
+            time.sleep(test_period)
 
     def drop_captured(self):
         """Return the audio data captured in the ringbuffer.
