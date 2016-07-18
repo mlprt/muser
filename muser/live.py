@@ -183,34 +183,38 @@ class ExtendedJackClient(jack.Client):
 
     Args:
         name (str): The JACK client name.
+        ports (dict): Types and numbers of ports to register.
+
+    Example:
+        To instantiate a JACK client called 'Example Client' with one MIDI
+        inport and two audio outports:
+
+        >>> muser.live.ExtendedJackClient('Example Client', {'midi_inports': 1,
+            'outports': 2})
     """
 
-    def __init__(self, name):
+    def __init__(self, name, ports=None):
         super().__init__(name=name)
         self._xruns = []
         self._n_xruns = 0
         self.set_xrun_callback(self._handle_xrun)
+        if ports is not None:
+            self._register_ports(**ports)
 
     def _handle_xrun(self, delay_usecs):
         # does not need to be suitable for real-time execution
         self._xruns.append((time.perf_counter(), delay_usecs))
         self._n_xruns += 1
 
-    @staticmethod
-    def _register_ports(jack_client, **port_args):
+    def _register_ports(self, **port_args):
         """Register a JACK client's ports of the given type and number.
 
-        Note:
-            It is caller's responsibility to properly specify ``**port_args``,
-            and to document them!
-
         Args:
-            jack_client (jack.Client): The client to register the ports.
             **port_args: Keys give port type, values give quantity to register.
-                Keys of ``port_args`` must be key subset of ``JACK_PORT_NAMES``
+                Keys of ``port_args`` must be key subset of ``JACK_PORT_NAMES``.
         """
         for port_type, n_ports in port_args.items():
-            ports = getattr(jack_client, port_type)
+            ports = getattr(self, port_type)
             for p_i in range(n_ports):
                 ports.register(JACK_PORT_NAMES[port_type].format(p_i))
 
@@ -272,10 +276,8 @@ class SynthInterfaceClient(ExtendedJackClient):
 
     def __init__(self, synth_config, audiobuffer_time=None):
         super().__init__(name="Muser-{} Interface".format(synth_config['name']))
-        ExtendedJackClient._register_ports(
-            self, midi_outports=len(synth_config['midi_inports']),
-            inports=len(synth_config['outports']),
-        )
+        self._register_ports(midi_outports=len(synth_config['midi_inports']),
+                             inports=len(synth_config['outports']))
         self.synth_config = synth_config
 
         if audiobuffer_time is None:
@@ -469,8 +471,7 @@ class SynthClient(ExtendedJackClient):
 
     def __init__(self, name="Muser Synth", channels=1):
         super().__init__(name=name)
-        ExtendedJackClient._register_ports(self, midi_inports=channels,
-                                           outports=channels)
+        self._register_ports(midi_inports=channels, outports=channels)
         self.set_process_callback(self.__process)
         self.synth_functions = [[] for ch in self.outports]
         self.channel_range = range(len(self.outports))
@@ -529,17 +530,6 @@ class SynthClient(ExtendedJackClient):
         else:
             for i_chan in channels_idx:
                 self.synth_functions[i_chan] = []
-
-
-def jack_client_with_ports(name="Muser", inports=0, outports=0,
-                           midi_inports=0, midi_outports=0):
-    """Return an inactive ``jack`` client with registered ports."""
-    jack_client = jack.Client(name)
-    ExtendedJackClient._register_ports(jack_client,
-                                       inports=inports, outports=outports,
-                                       midi_inports=midi_inports,
-                                       midi_outports=midi_outports)
-    return jack_client
 
 
 def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
