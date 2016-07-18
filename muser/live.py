@@ -11,10 +11,11 @@ import itertools
 import re
 import struct
 import time
-import muser.utils
 import jack
 import numpy as np
 import rtmidi
+
+import muser.utils
 
 JACK_PORT_NAMES = {
     'inports':'in_{}',
@@ -250,10 +251,11 @@ class ExtendedJackClient(jack.Client):
 
 
 class SynthInterfaceClient(ExtendedJackClient):
-    """Extended JACK client with audio capture and MIDI event sending.
+    """Extended JACK client with synthesizer interfacing features.
 
-    Uses ``jack`` ringbuffers for thread-safe exchanges of MIDI and audio data
-    with the process callback.
+    Includes MIDI event sending to synth MIDI inports and capture of audio
+    out of synth outports. Uses ``jack`` ringbuffers for thread-safe exchanges
+    of MIDI and audio data with the process callback.
 
     Note:
         Number of bytes allocated for the MIDIRingBuffer does not need to equal
@@ -262,28 +264,19 @@ class SynthInterfaceClient(ExtendedJackClient):
         per block.
 
     Args:
-        name (str): Client name.
-        inports (int): Number of inports to register and capture from.
-            Intended to be equal to the number of synthesizer audio outports.
-            Two-channel (stereo) capturing is default.
+        synth_config (dict): Synthesizer configuration variables.
         audiobuffer_time (float): Minutes of audio to allocate for ringbuffer.
             This should be at least as long as the longest audio capture,
             uninterrupted by a call to ``self.drop_capture()``.
-        reset_event (tuple): MIDI event to reset synth output.
-            Not all synths will reset themselves in response to the same
-            status byte, so the user should verify and alter as needed.
     """
 
-    def __init__(self, synth_midi_inports, synth_outports,
-                 name="Muser-Synth Interface", reset_event=None,
-                 audiobuffer_time=None):
-
-        super().__init__(name=name)
-        ExtendedJackClient._register_ports(self, midi_outports=1,
-                                           inports=len(synth_outports))
-        self._inport_enum = list(enumerate(self.inports))
-        self.synth_midi_inports = synth_midi_inports
-        self.synth_outports = synth_outports
+    def __init__(self, synth_config, audiobuffer_time=None):
+        super().__init__(name="Muser-{} Interface".format(synth_config['name']))
+        ExtendedJackClient._register_ports(
+            self, midi_outports=len(synth_config['midi_inports']),
+            inports=len(synth_config['outports']),
+        )
+        self.synth_config = synth_config
 
         if audiobuffer_time is None:
             audiobuffer_time = 10
@@ -292,7 +285,6 @@ class SynthInterfaceClient(ExtendedJackClient):
                                              blocks=audiobuffer_blocks)
         self.__eventsbuffer = MIDIRingBuffer(self.blocksize)
         self._capture_log = []
-        self._reset_event = reset_event
         self.set_process_callback(self.__process)
 
     @classmethod
@@ -304,39 +296,34 @@ class SynthInterfaceClient(ExtendedJackClient):
         irrespective of case or surrounding characters.
 
         Example:
-            Pianoteq v5.5.1 is active with port names like 'Pianoteq55::out_1',
+            Pianoteq v5.5.1 is active with port names like 'Pianoteq55:out_1',
             with one MIDI inport and five audio outports enabled by default.
             Calling this constructor with ``synth_name='pianoteq'`` constructs
-            and returns a JACK client with one MIDI outport and five audio
-            outports, and the name 'Muser/Pianoteq55 Interface'.
+            and returns a JACK client with 1 MIDI inport and 5 audio outports.
 
         Note:
             Regular expression strings (not compiled objects) can be passed to
             ``jack.Client.get_ports()``, but ``re`` is used here anyway because
-            passing with the case-insensitive flag '(?i)' caused segfaults.
+            passing with the case-insensitive flag ``(?i)`` caused segfaults.
 
         Args:
             synth_name (str): Name of the synthesizer. Case-insensitive.
-            reset_event (Tuple[int]):
-            audiobuffer_time (float):
+            reset_event (Tuple[int]): MIDI event that resets the synth.
+                Synth behaviour is not universal, so
+            audiobuffer_time (float): Minutes of audio buffer time to allocate.
         """
-        client_name = "Muser/{} Interface"
-        synth_midi_inports, synth_outports = [], []
+        synth_config = dict(name='', midi_inports=[], outports=[],
+                            reset_event=reset_event)
         regex = re.compile(synth_name, re.IGNORECASE)
         with jack.Client('tmp') as client:
             for port in client.get_ports():
-                port_name = port.name
-                if regex.search(port_name.split(':')[0]):
+                if regex.search(port.name.split(':')[0]):
                     if port.is_midi and port.is_input:
-                        synth_midi_inports.append(port_name)
+                        synth_config['midi_inports'].append(port.name)
                     if port.is_audio and port.is_output:
-                        synth_outports.append(port_name)
-        synth_proper_name = synth_outports[0].split(':')[0]
-        return cls(synth_midi_inports=synth_midi_inports,
-                   synth_outports=synth_outports,
-                   name=client_name.format(synth_proper_name),
-                   reset_event=reset_event,
-                   audiobuffer_time=audiobuffer_time)
+                        synth_config['outports'].append(port.name)
+            synth_config['name'] = synth_config['outports'][0].split(':')[0]
+        return cls(synth_config, audiobuffer_time=audiobuffer_time)
 
     def __process(self, frames):
         self._capture(frames)
@@ -344,7 +331,7 @@ class SynthInterfaceClient(ExtendedJackClient):
 
     def _capture(self, dummy):
         """The capture process. Runs continuously with activated client."""
-        buffers = [port[1].get_buffer() for port in self._inport_enum]
+        buffers = [port.get_buffer() for port in self.inports]
         self.__audiobuffer.write_block(buffers)
 
     def _midi_write(self, dummy):
@@ -356,13 +343,13 @@ class SynthInterfaceClient(ExtendedJackClient):
         """Write events to the ringbuffer for reading by next process cycle.
 
         If offset is determined by ``frames_since_cycle_start``, which is an
-        estimate, might need to force into [0, blocksize).
+        estimate, then force into ``range(blocksize)`` to prevent JACK errors.
         """
         offset = 0
         for event in events:
             self.__eventsbuffer.write_event(offset, tuple(event))
 
-    def capture_events(self, events_sequence, test_rate=25, amp_rel_thres=1e-4,
+    def capture_events(self, event_groups, test_rate=25, amp_rel_thres=1e-4,
                        max_xruns=0, attempts=10, cpu_load_thres=15):
         """Send groups of MIDI events in series and capture the result.
 
@@ -387,7 +374,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         # pause briefly to ensure inter-capture xruns are logged
         time.sleep(0.1)
         for _ in range(attempts):
-            capture_args = (events_sequence, test_period,
+            capture_args = (event_groups, test_period,
                             amp_rel_thres, max_xruns)
             self.__audiobuffer.activate()
             attempt = self._capture_loop(*capture_args)
@@ -453,15 +440,15 @@ class SynthInterfaceClient(ExtendedJackClient):
         """
         if disconnect:
             self.disconnect_all()
-        for midi_port_pair in zip(self.midi_outports, self.synth_midi_inports):
+        for midi_port_pair in zip(self.midi_outports, self.synth_config['midi_inports']):
             self.connect(*midi_port_pair)
-        for audio_port_pair in zip(self.synth_outports, self.inports):
+        for audio_port_pair in zip(self.synth_config['outports'], self.inports):
             self.connect(*audio_port_pair)
 
     def reset_synth(self):
         """Send signal to synthesizer to reset output."""
-        if self._reset_event is not None:
-            self.send_events((self._reset_event,))
+        if self.synth_config['reset_event'] is not None:
+            self.send_events((self.synth_config['reset_event'],))
 
     @property
     def capture_log(self):
