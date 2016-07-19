@@ -15,6 +15,7 @@ import jack
 import numpy as np
 import rtmidi
 
+import muser.sequencer
 import muser.utils
 
 JACK_PORT_NAMES = dict(
@@ -24,6 +25,15 @@ JACK_PORT_NAMES = dict(
     midi_outports='midi_out_{}',
 )
 """Default naming of JACK port types."""
+
+DEFAULT_CONTROL_SET = dict(
+    reset=muser.sequencer.control_event('RESET_ALL_CONTROLLERS'),
+    pedal_sustain=muser.sequencer.continuous_control('PEDAL_SUSTAIN'),
+    pedal_portamento=muser.sequencer.continuous_control('PEDAL_PORTAMENTO'),
+    pedal_sostenuto=muser.sequencer.continuous_control('PEDAL_SOSTENUTO'),
+    pedal_soft=muser.sequencer.continuous_control('PEDAL_SOFT'),
+)
+"""Default synthesizer control events."""
 
 
 class MIDIRingBuffer(object):
@@ -192,7 +202,6 @@ class ExtendedJackClient(jack.Client):
     def __init__(self, name, ports=None):
         super().__init__(name=name)
         self._xruns = []
-        self._n_xruns = 0
         self.set_xrun_callback(self._handle_xrun)
         if ports is not None:
             self._register_ports(**ports)
@@ -200,7 +209,6 @@ class ExtendedJackClient(jack.Client):
     def _handle_xrun(self, delay_usecs):
         # does not need to be suitable for real-time execution
         self._xruns.append((time.perf_counter(), delay_usecs))
-        self._n_xruns += 1
 
     def _register_ports(self, **port_args):
         """Register a JACK client's ports of the given type and number.
@@ -236,7 +244,7 @@ class ExtendedJackClient(jack.Client):
     @property
     def n_xruns(self):
         """int: Number of xruns logged by the client."""
-        return self._n_xruns
+        return len(self._xruns)
 
     @property
     def max_offset(self):
@@ -274,7 +282,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         super().__init__(name="Muser-{} Interface".format(synth_config['name']))
         self._register_ports(midi_outports=len(synth_config['midi_inports']),
                              inports=len(synth_config['outports']))
-        self.synth_config = synth_config
+        self.synth_config = {**DEFAULT_CONTROL_SET, **synth_config}
 
         if audiobuffer_time is None:
             audiobuffer_time = 10
@@ -286,8 +294,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         self.set_process_callback(self.__process)
 
     @classmethod
-    def from_synthname(cls, synth_name, reset_event=None,
-                       audiobuffer_time=None):
+    def from_synthname(cls, synth_name, audiobuffer_time=None):
         """ Return an interface to the active synth with the provided name.
 
         Searches active JACK ports for client names containing ``synth_name``,
@@ -306,12 +313,14 @@ class SynthInterfaceClient(ExtendedJackClient):
 
         Args:
             synth_name (str): Name of the synthesizer. Case-insensitive.
-            reset_event (Tuple[int]): MIDI event that resets the synth.
-                Synth behaviour is not universal, so
             audiobuffer_time (float): Minutes of audio buffer time to allocate.
         """
-        synth_config = dict(name='', midi_inports=[], outports=[],
-                            reset_event=reset_event)
+        synth_config = dict(
+            **DEFAULT_CONTROL_SET,
+            name='',
+            midi_inports=[],
+            outports=[],
+        )
         regex = re.compile(synth_name, re.IGNORECASE)
         with jack.Client('tmp') as client:
             for port in client.get_ports():
@@ -455,8 +464,8 @@ class SynthInterfaceClient(ExtendedJackClient):
 
     def reset_synth(self):
         """Send signal to synthesizer to reset output."""
-        if self.synth_config['reset_event'] is not None:
-            self.send_events((self.synth_config['reset_event'],))
+        if self.synth_config['reset'] is not None:
+            self.send_events((self.synth_config['reset'],))
 
     @property
     def capture_log(self):
@@ -469,7 +478,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         return np.array([s[1:] for s in self._capture_log])
 
 
-class SynthClient(ExtendedJackClient):
+class Synth(ExtendedJackClient):
     """Manages multichannel, functional synthesis of audio.
 
     TODO: Pre-calculated waveforms to minimize JACK xruns. Threading?

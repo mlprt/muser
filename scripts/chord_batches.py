@@ -22,14 +22,7 @@ os.makedirs(data_dir, exist_ok=True)
 print_details = True
 profile_capture = True
 profile_name = 'capture_events-batch{}_chord{}-profile'
-synth_config = dict(
-    name="Pianoteq55",
-    reset=(0xB0, 0, 0),
-    pedal_soft=sequencer.continuous_controller(0xB0, 67),
-    pedal_sustain=sequencer.continuous_controller(0xB0, 64),
-    pedal_sostenuto=sequencer.continuous_controller(0xB0, 66),
-    pedal_harmonic=sequencer.continuous_controller(0xB0, 69),
-)
+synth_name = 'Pianoteq'
 
 # Batch generation parameters
 chord_size = 3
@@ -45,15 +38,12 @@ chord_batches['velocity_vector'] = utils.get_batches(chord_gen, batches,
                                                      batch_size, [chord_size])
 
 # JACK client initialization
-client = live.SynthInterfaceClient.from_synthname(
-    synth_name=synth_config['name'],
-    reset_event=synth_config['reset'],
-    audiobuffer_time=1,
-)
+client = live.SynthInterfaceClient.from_synthname(synth_name=synth_name,
+                                                  audiobuffer_time=3)
+client.synth_config['reset'] = (0xB0, 0, 0)
 samplerate = client.samplerate
 
-client.activate()
-try:
+with client:
     client.connect_synth()
     start_clock = time.perf_counter()
     for i_batch, batch in enumerate(chord_batches):
@@ -61,7 +51,7 @@ try:
             init_pause = {'events': None, 'duration': 0.5}
             velocity_vector = chord['velocity_vector']
             notes_on = sequencer.vector_to_midi_events('ON', velocity_vector)
-            on_events = {'events': notes_on, 'duration': 0.5}
+            on_events = {'events': notes_on, 'duration': None}
             notes_off = sequencer.vector_to_midi_events('OFF', velocity_vector)
             off_events = {'events': notes_off, 'duration': 0.25}
             event_groups = [init_pause, on_events, off_events]
@@ -72,13 +62,6 @@ try:
             else:
                 client.capture_events(event_groups)
             chord['captured_buffers'] = client.drop_captured()
-
-    client.dismantle()
-
-except (KeyboardInterrupt, SystemExit):
-    print('\nUser or system interrupt, dismantling JACK clients!\n')
-    client.dismantle()
-    raise
 
 if profile_capture:
     name = os.path.join(data_dir, profile_name.format(0, 0))
@@ -92,9 +75,8 @@ if print_details:
         print('{:.4f} s'.format(xrun[0]))
     print("\nCapture timepoints (seconds):")
     utils.print_logs_entryexit(client.capture_log, output_labels={None: 'Xrun'},
-                               ref_clock=start_clock,
-                               header=('Start', 'End'), figs=(10, 4))
-
+                               ref_clock=start_clock, header=('Start', 'End'),
+                               figs=(10, 4))
 
 # store chord batches
 pickle_path = os.path.join(data_dir, 'chord_batches.pickle')

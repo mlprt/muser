@@ -60,7 +60,7 @@ def notation_to_notes(notation):
     return notes
 
 
-def random_note(pitch=None, pitch_range='full', velocity=None,
+def random_note(pitch=None, pitch_range='midi', velocity=None,
                 velocity_lims=VELOCITY_LIMS):
     """Return a ``music21.note.Note`` with specified or randomized attributes.
 
@@ -217,17 +217,33 @@ def note_to_midi_onoff(note):
     return note_on, note_off
 
 
-def continuous_controller(status, data_byte1):
+def control_event(data_byte1, data_byte2=0, channel=1):
+    """Return a MIDI control event with the given data bytes."""
+    data_byte1 = _key_check(CONTROL_BYTES, data_byte1, 'upper')
+    return (STATUS_BYTES['CONTROL'] + channel - 1, data_byte1, data_byte2)
+
+
+def continuous_event(status, data_byte1, channel=1):
     """Return a function that varies the second data byte of a MIDI event.
 
     Args:
         status (int or str): The MIDI status byte.
-        data_byte1 (int or str): The first MIDI data byte.
+        data_byte1 (int or str): The first MIDI data byte (control byte).
+        channel (int): The MIDI channel (1-16).
+            Only applies to channel-dependent MIDI messages.
     """
     status = _key_check(STATUS_BYTES, status, 'upper')
     def event(data_byte2):
-        return (status, data_byte1, data_byte2)
+        return (status + channel - 1, data_byte1, data_byte2)
     return event
+
+
+def continuous_control(data_byte1, channel=1):
+    """Return a function that varies the second data byte of a control event."""
+    data_byte1 = _key_check(CONTROL_BYTES, data_byte1, 'upper')
+    return continuous_event(STATUS_BYTES['CONTROL'],
+                            data_byte1=data_byte1,
+                            channel=channel)
 
 
 def midi_velocity_vector():
