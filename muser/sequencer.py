@@ -251,6 +251,23 @@ def midi_velocity_vector():
     return np.zeros(PITCH_RANGES['midi'][1])
 
 
+def beat_bias(beat_float, timesig, beat_biases):
+    """Returns a bias depending on relative position in a measure.
+
+    Currently uses linear interpolation between values in ``beat_biases``.
+
+    Args:
+        beat_float (float): Relative position in the measure.
+            Refers to beats using indices, so a value of 0.5 refers to the
+            position halfway between the first and second beats in the measure.
+        timesig (Tuple[int]): The time signature of the measure.
+            For example, ``(4, 4)`` corresponds to the time signature 4/4.
+        beat_biases (dict):
+    """
+    beats = range(timesig[0])
+    return np.interp(beat_float, beats, beat_biases[timesig])
+
+
 def _key_check(dict_, key, case=None):
     """"""
     if case is not None:

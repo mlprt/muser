@@ -3,11 +3,12 @@
 Only accounts for note on and off events and tempo changes.
 """
 
+import midi
+import muser.audio as audio
 import muser.live as live
 import muser.sequencer as sequencer
-import time
-import midi
 import numpy as np
+import scipy.io.wavfile as wavfile
 
 synth_name = 'Pianoteq55'
 
@@ -25,24 +26,10 @@ for track in midi_pattern:
 bias_beats = True
 beat_biases = {(4, 4): (1.0, 0.9, 0.95, 0.875),
                (3, 4): (1.0, 0.8, 0.9)}
-def beat_bias(beat_float, timesig):
-    """Returns a bias depending on relative position in a measure.
-
-    Currently uses linear interpolation between values in ``beat_biases``.
-
-    Args:
-        beat_float (float): Relative position in the measure.
-            Refers to beats using indices, so a value of 0.5 refers to the
-            position halfway between the first and second beats in the measure.
-        timesig (Tuple[int]): The time signature of the measure.
-            For example, ``(4, 4)`` corresponds to the time signature 4/4.
-    """
-    beats = range(timesig[0])
-    return np.interp(beat_float, beats, beat_biases[timesig])
 
 timesig = {}
 tempo = {}
-events_sequence = {}
+events_by_tick = {}
 
 # filter and convert events
 for event in events:
@@ -55,43 +42,46 @@ for event in events:
     # elif control change
     # elif program change
     elif event.name == 'Note On':
-        note = [sequencer.NOTE_ON, event.pitch, event.velocity]
+        note = [sequencer.STATUS_BYTES['NOTE_ON'], event.pitch, event.velocity]
         if bias_beats:
-            note[2] *= beat_bias((event.tick % ticks_per_measure) / ticks_per_beat,
-                                 timesig_)
+            measure_pos = (event.tick % ticks_per_measure) / ticks_per_beat
+            note[2] *= sequencer.beat_bias(measure_pos, timesig_, beat_biases)
             note[2] = int(note[2])
-        if event.tick in events_sequence:
-            events_sequence[event.tick].append(note)
+        if event.tick in events_by_tick:
+            events_by_tick[event.tick].append(note)
         else:
-            events_sequence[event.tick] = [note]
+            events_by_tick[event.tick] = [note]
     elif event.name == 'Note Off':
-        note = (sequencer.NOTE_OFF, note.pitch, 0)
-        if event.tick in events_sequence:
-            events_sequence[event.tick].append(note_tuple)
+        note = [sequencer.STATUS_BYTES['NOTE_OFF'], note.pitch, 0]
+        if event.tick in events_by_tick:
+            events_by_tick[event.tick].append(note)
         else:
-            events_sequence[event.tick] = [note_tuple]
+            events_by_tick[event.tick] = [note]
+
+events_list = sorted([(tick, group) for tick, group in events_by_tick.items()])
+delta_ticks = np.diff(list(zip(*events_list))[0])
+event_groups = [{'events': None, 'duration': 1.0}]
+for i_group, group in enumerate(events_list):
+    event_group = {'events': group[1]}
+    tempo_i = tempo.get(group[0], 0)
+    if tempo_i:
+        s_per_tick = 60.0 / (tempo_i * midi_pattern.resolution)
+    try:
+        event_group['duration'] = delta_ticks[i_group] * s_per_tick
+    except IndexError:
+        event_group['duration'] = 5.0
+    event_groups.append(event_group)
 
 # client with MIDI event sending only
 client = live.SynthInterfaceClient.from_synthname(synth_name,
-                                                  reset_event=(0xB0,0,0),
                                                   audiobuffer_time=5)
-client.activate()
-client.midi_outports[0].disconnect()
-client.connect(client.midi_outports[0], client.synth_midi_inports[0])
+client.synth_config['reset'] = (0xB0, 0, 0)
 
-# playback: register tempo changes, send current events to synthesizer,
-#     then pause for the current duration of one tick
-# 120 beats/min, 60 s/min, 1000 ticks/s
 
-for tick in range(0, max(events_sequence.keys())):
-    if tempo.get(tick, 0):
-        s_per_tick = 60.0 / (tempo[tick] * midi_pattern.resolution)
-    current_events = events_sequence.get(tick, [])
-    if current_events:
-        client.send_events(current_events)
-    time.sleep(s_per_tick)
+with client:
+    client.connect_synth()
+    client.capture_events(event_groups)
 
-client.reset_synth()
-client.deactivate()
-client.outports.clear()
-client.close()
+buffers = client.drop_captured()
+snd = audio.buffers_to_snd(buffers)
+wavfile.write('/tmp/muser/goldberg.wav', 44100, snd)
