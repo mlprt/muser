@@ -1,6 +1,7 @@
 """ Utility functions. """
 
 import functools
+import struct
 import time
 import numpy as np
 import peakutils
@@ -199,3 +200,41 @@ def get_batches(get_member, batches, batch_size, member_args=(None,)):
         return series(get_member, batch_size, *args)
     batches = series(batch, batches, *member_args)
     return batches
+
+
+def key_check(key, dict_, case=None):
+    """Return key if key in dict, else dict value.
+
+    Useful for handling optional string arguments.
+
+    Args:
+        key: Value to keep, or replace if in ``dict_``.
+        dict_ (dict): Checked for ``key``.
+        case (str): Attribute-method to apply on ``key`` before ``dict_`` check.
+            Example:
+                ``key`` is str, lowercase ``dict_`` keys --> ``case='lower'``
+    """
+    if case is not None:
+        try:
+            key = getattr(key, case)()
+        except AttributeError:
+            return key
+    try:
+        value = dict_[key]
+        return value
+    except KeyError:
+        return key
+
+
+def bytes_split(bytes_, length):
+    """Split bytes into pieces of equal size."""
+    n_pieces, excess = divmod(len(bytes_), length)
+    if excess:
+        raise ValueError('Bytes of length {} cannot be equally divided into '
+                         'pieces of length {}'.format(len(bytes_), length))
+    return [bytes_[i * length : (i + 1) * length] for i in range(n_pieces)]
+
+
+def unpack_elements(element_format, byte_elements):
+    """Unpack each ``bytes`` element in an iterable with a single format."""
+    return [struct.unpack(element_format, element) for element in byte_elements]

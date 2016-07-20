@@ -16,6 +16,8 @@ byte should be 0xBF instead of 0xB0.
 import music21
 import numpy as np
 
+import muser.utils
+
 N_PITCHES = 127
 VELOCITY_LO = 0
 VELOCITY_HI = 127
@@ -83,7 +85,7 @@ def random_note(pitch=None, pitch_range='midi', velocity=None,
     """
 
     if pitch is None:
-        pitch_range = _key_check(PITCH_RANGES, pitch_range, 'lower')
+        pitch_range = muser.utils.key_check(pitch_range, PITCH_RANGES, 'lower')
         pitch = np.random.choice(pitch_range)
     if velocity is None:
         velocity = np.random.randint(*velocity_lims)
@@ -111,7 +113,7 @@ def random_chord(chord_size=3, pitch_range='midi', velocity=None,
     Returns:
         chord (music21.chord.Chord): Chord object.
     """
-    pitch_range = _key_check(PITCH_RANGES, pitch_range, 'lower')
+    pitch_range = muser.utils.key_check(pitch_range, PITCH_RANGES, 'lower')
     pitches = np.random.choice(pitch_range, chord_size, replace=not unique)
     notes = [random_note(pitch=p, velocity=velocity,
                          velocity_lims=velocity_lims) for p in pitches]
@@ -172,7 +174,7 @@ def midi_all_notes_off(midi_basic=False, pitch_range='midi'):
         pitch_range (Tuple[int]): Range of pitches for NOTE_OFF events, if used.
             Defaults to entire MIDI pitch range.
     """
-    pitch_range = _key_check(PITCH_RANGES, pitch_range, 'lower')
+    pitch_range = muser.utils.key_check(pitch_range, PITCH_RANGES, 'lower')
     if midi_basic:
         pitches_off = np.zeros(N_PITCHES)
         pitches_off[slice(*pitch_range)] = 1
@@ -194,7 +196,7 @@ def vector_to_midi_events(status, velocity_vector):
     Returns:
         chord_events (np.ndarray): MIDI event parameters, one event per row.
     """
-    status = _key_check(STATUS_BYTES, status, 'upper')
+    status = muser.utils.key_check(status, STATUS_BYTES, 'upper')
     pitches = np.flatnonzero(velocity_vector)
     velocities = velocity_vector[pitches] * VELOCITY_HI
     chord_events = np.zeros((3, len(pitches)), dtype=np.uint8)
@@ -219,7 +221,7 @@ def note_to_midi_onoff(note):
 
 def control_event(data_byte1, data_byte2=0, channel=1):
     """Return a MIDI control event with the given data bytes."""
-    data_byte1 = _key_check(CONTROL_BYTES, data_byte1, 'upper')
+    data_byte1 = muser.utils.key_check(data_byte1, CONTROL_BYTES, 'upper')
     return (STATUS_BYTES['CONTROL'] + channel - 1, data_byte1, data_byte2)
 
 
@@ -232,7 +234,7 @@ def continuous_event(status, data_byte1, channel=1):
         channel (int): The MIDI channel (1-16).
             Only applies to channel-dependent MIDI messages.
     """
-    status = _key_check(STATUS_BYTES, status, 'upper')
+    status = muser.utils.key_check(status, STATUS_BYTES, 'upper')
     def event(data_byte2):
         return (status + channel - 1, data_byte1, data_byte2)
     return event
@@ -240,7 +242,7 @@ def continuous_event(status, data_byte1, channel=1):
 
 def continuous_control(data_byte1, channel=1):
     """Return a function that varies the second data byte of a control event."""
-    data_byte1 = _key_check(CONTROL_BYTES, data_byte1, 'upper')
+    data_byte1 = muser.utils.key_check(data_byte1, CONTROL_BYTES, 'upper')
     return continuous_event(STATUS_BYTES['CONTROL'],
                             data_byte1=data_byte1,
                             channel=channel)
@@ -268,15 +270,21 @@ def beat_bias(beat_float, timesig, beat_biases):
     return np.interp(beat_float, beats, beat_biases[timesig])
 
 
-def _key_check(dict_, key, case=None):
-    """"""
-    if case is not None:
-        try:
-            key = getattr(key, case)()
-        except AttributeError:
-            return key
-    try:
-        value = dict_[key]
-        return value
-    except KeyError:
-        return key
+def read_midifile(filepath):
+    """Read a MIDI file and return a music21 ``MidiFile`` object."""
+    midifile = music21.midi.MidiFile()
+    midifile.open(filepath, 'rb')
+    midifile.read()
+    midifile.close()
+    return midifile
+
+
+def midifile_to_notes(midifile):
+    """Read a MIDI file and return."""
+    return music21.midi.translate.midiFileToStream(midifile).flat
+
+
+def m21_midievent_to_event(midievent):
+    """Convert a music21 MidiEvent to a tuple of MIDI bytes."""
+    status = midievent.data + midievent.channel - 1
+    return (status, midievent.pitch, midievent.velocity)
