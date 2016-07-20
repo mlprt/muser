@@ -8,15 +8,18 @@ capture endpoints and buffer overrun/underrun events.
 
 import copy
 import itertools
+import os
+import queue
 import re
 import struct
+import threading
 import time
 import jack
 import numpy as np
 import rtmidi
 
-import muser.sequencer
-import muser.utils
+import muser.sequencer as sequencer
+import muser.utils as utils
 
 JACK_PORT_NAMES = dict(
     inports='in_{}',
@@ -27,11 +30,11 @@ JACK_PORT_NAMES = dict(
 """Default naming of JACK port types."""
 
 DEFAULT_CONTROL_SET = dict(
-    reset=muser.sequencer.control_event('RESET_ALL_CONTROLLERS'),
-    pedal_sustain=muser.sequencer.continuous_control('PEDAL_SUSTAIN'),
-    pedal_portamento=muser.sequencer.continuous_control('PEDAL_PORTAMENTO'),
-    pedal_sostenuto=muser.sequencer.continuous_control('PEDAL_SOSTENUTO'),
-    pedal_soft=muser.sequencer.continuous_control('PEDAL_SOFT'),
+    reset=sequencer.control_event('RESET_ALL_CONTROLLERS'),
+    pedal_sustain=sequencer.continuous_control('PEDAL_SUSTAIN'),
+    pedal_portamento=sequencer.continuous_control('PEDAL_PORTAMENTO'),
+    pedal_sostenuto=sequencer.continuous_control('PEDAL_SOSTENUTO'),
+    pedal_soft=sequencer.continuous_control('PEDAL_SOFT'),
 )
 """Default synthesizer control events."""
 
@@ -90,6 +93,10 @@ class MIDIRingBuffer(object):
 class AudioRingBuffer(object):
     """Manages a JACK ringbuffer for thread-safe passing of audio data.
 
+    If audio is captured for longer than the allocated buffer minutes, the
+    captured data is dumped to a file by a separate thread, and reconstituted
+    by the client's call to ``get_all_blocks``.
+
     Attributes:
         FRAME_FORMAT (str): Defines the C datatype of each JACK audio frame.
             See ``jack_default_audio_sample_t`` in the JACK C source code.
@@ -106,29 +113,43 @@ class AudioRingBuffer(object):
         155,000 samples or 1.27 GB, and 1 min is ~21 MB.
 
     Args:
-        blocksize (int): Number of frames per JACK audio buffer.
+        jack_client (jack.Client): JACK client that the instance will serve.
+        minutes (float): Minutes of buffer time to allocate.
         channels (int): Number of channels to be stored per block.
-        blocks (int): Number of blocks for which to allocate storage.
-            The more the read process lags behind the write process, and the
-            longer the overall capture time, the larger this value should be
-            to avoid losing blocks.
     """
     FRAME_FORMAT = 'f'  # floats
     FRAME_BYTES = struct.calcsize(FRAME_FORMAT)
     BUFFER_FORMAT = '{:d}' + FRAME_FORMAT
 
-    def __init__(self, blocksize, channels, blocks=10000):
-        self.buffer_format = self.BUFFER_FORMAT.format(blocksize)
+    def __init__(self, jack_client, buffer_minutes, channels,
+                 tmp_dir='/tmp/muser/tmp'):
+        self.jack_client = jack_client
+        self.buffer_seconds = 60.0 * buffer_minutes
+        self.channels = channels
+        self.blocks = int(self.buffer_seconds / jack_client.blocktime)
+        self.buffer_format = self.BUFFER_FORMAT.format(jack_client.blocksize)
         self.buffer_bytes = struct.calcsize(self.buffer_format)
         self.block_format = channels * self.buffer_format
         self.block_bytes = struct.calcsize(self.block_format)
-        self.channels = channels
 
-        self._ringbuffer = jack.RingBuffer(blocks * self.block_bytes)
-        self._active = False
+        self.__ringbuffer = jack.RingBuffer(self.blocks * self.block_bytes)
+        self.__active = False
+
+        self.tmp_dir = tmp_dir
+        self._tmp_filepath = os.path.join(tmp_dir,
+                                          '{}-dump{{}}'.format(id(self)))
+        os.makedirs(self.tmp_dir, exist_ok=True)
+        self.__dumps = 0
+        self.__dump_queue = queue.Queue()
+        self.__dump_thread = threading.Thread(target=self.__dump)
+        self.__dump_thread.daemon = True
+        self.__lock = threading.Lock()
 
     def write_block(self, buffers):
         """If ringbuffer is active, write buffers for a single block.
+
+        If ringbuffer is full, dump values to queue for writing to disk
+        in a separate thread (``self.drop()``).
 
         Args:
             buffers (List[buffer]): JACK CFFI buffers from audio ports.
@@ -137,9 +158,13 @@ class AudioRingBuffer(object):
         if not len(buffers) == self.channels:
             raise ValueError("Number of buffers passed for block write not "
                              "equal to number of ringbuffer channels")
-        if self._active:
+        if self.__active:
             data = b''.join(buffer_ for buffer_ in buffers)
-            self._ringbuffer.write(data)
+            self.__ringbuffer.write(data)
+        if self.__ringbuffer.write_space < self.block_bytes:
+            dump = self.__ringbuffer.peek(self.__ringbuffer.read_space)
+            self.__dump_queue.put(dump)
+            self.__ringbuffer.read_advance(self.__ringbuffer.read_space)
 
     def read_block(self):
         """Read a single block's buffers from the ringbuffer.
@@ -147,37 +172,82 @@ class AudioRingBuffer(object):
         Returns:
             buffers (List[buffer]): JACK CFFI buffers for a single audio block.
         """
-        block = self._ringbuffer.read(self.block_bytes)
-        buffers = list(map(b''.join, zip(*[iter(block)] * self.buffer_bytes)))
+        block = self.__ringbuffer.read(self.block_bytes)
+        buffers = utils.bytes_split(block, self.buffer_bytes)
         return buffers
+
+    def get_all_blocks(self):
+        """Return all blocks captured by the ringbuffer.
+
+        Reads, unpacks, and appends all blocks dumped to files, then unpacks
+        and appends all blocks remaining in the ringbuffer.
+
+        Returns:
+            blocks (List[list]): JACK audio data.
+                Shape is ``[n_blocks, channels, jack_client.blocksize]``.
+        """
+        blocks = []
+        dumps = self.__dumps
+        while self.__dumps:
+            filepath = self._tmp_filepath.format(dumps - self.__dumps)
+            with open(filepath, 'rb') as dumpfile:
+                dump_blocks = utils.bytes_split(dumpfile.read(),
+                                                self.block_bytes)
+                for block in dump_blocks:
+                    buffers = utils.bytes_split(block, self.buffer_bytes)
+                    blocks.append(utils.unpack_elements(self.buffer_format,
+                                                        buffers))
+            self.__dumps -= 1
+        while self.n_blocks:
+            block = self.read_block()
+            blocks.append(utils.unpack_elements(self.buffer_format, block))
+        return blocks
+
+    def __dump(self):
+        """Thread that dumps blocks queued by ``write_block()``."""
+        while True:
+            filepath = self._tmp_filepath.format(self.__dumps)
+            dump = self.__dump_queue.get(block=True)
+            with open(filepath, 'wb') as dumpfile:
+                dumpfile.write(dump)
+            self.__dumps += 1
+            self.__dump_queue.task_done()
 
     def reset(self):
         """Empty the ringbuffer. Not thread safe."""
-        self._ringbuffer.reset()
+        self.__ringbuffer.reset()
 
     def activate(self):
-        """Enable writes of incoming buffers to ringbuffer."""
-        self._active = True
+        """Enable writes of incoming buffers to ringbuffer.
+
+        Starts the thread that dumps to file, if necessary.
+        """
+        self.__active = True
+        if not self.__dump_thread.is_alive():
+            self.__dump_thread.start()
+        self.__dumps = 0
 
     def deactivate(self):
         """Disable writes of incoming buffers to ringbuffer."""
-        self._active = False
+        self.__active = False
 
     @property
     def active(self):
         """bool: Whether incoming buffers are being written."""
-        return self._active
+        return self.__active
 
     @property
     def last_block(self):
         """memoryview: Copy of last stored block."""
-        last_block = self._ringbuffer.read_buffers[0][-self.block_bytes:]
+        last_block = self.__ringbuffer.read_buffers[0][-self.block_bytes:]
         return memoryview(bytes(last_block)).cast(self.FRAME_FORMAT)
 
     @property
-    def n_blocks(self):
-        """int: Number of blocks stored in ringbuffer."""
-        n_blocks = self._ringbuffer.read_space // self.block_bytes
+    def n_blocks(self, dumps=True):
+        """int: Number of blocks stored in ringbuffer, and dumped to files."""
+        n_blocks = self.__ringbuffer.read_space // self.block_bytes
+        if dumps:
+            n_blocks += self.__dumps * self.__ringbuffer.size // self.block_bytes
         return n_blocks
 
 
@@ -283,12 +353,9 @@ class SynthInterfaceClient(ExtendedJackClient):
         self._register_ports(midi_outports=len(synth_config['midi_inports']),
                              inports=len(synth_config['outports']))
         self.synth_config = {**DEFAULT_CONTROL_SET, **synth_config}
-
-        if audiobuffer_time is None:
-            audiobuffer_time = 10
-        audiobuffer_blocks = int(60 * audiobuffer_time / self.blocktime)
-        self.__audiobuffer = AudioRingBuffer(self.blocksize, len(self.inports),
-                                             blocks=audiobuffer_blocks)
+        self.__audiobuffer = AudioRingBuffer(jack_client=self,
+                                             buffer_minutes=audiobuffer_time,
+                                             channels=len(self.inports))
         self.__eventsbuffer = MIDIRingBuffer(self.blocksize)
         self._capture_log = []
         self.set_process_callback(self.__process)
@@ -356,7 +423,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         for event in events:
             self.__eventsbuffer.write_event(offset, tuple(event))
 
-    def capture_events(self, event_groups, test_rate=25, amp_rel_thres=1e-4,
+    def capture_events(self, event_groups, test_rate=100, amp_rel_thres=1e-4,
                        max_xruns=0, attempts=10, cpu_load_thres=15):
         """Send groups of MIDI events in series and capture the result.
 
@@ -393,8 +460,8 @@ class SynthInterfaceClient(ExtendedJackClient):
             else:
                 return
 
-    @muser.utils.prepost_method('reset_synth')
-    @muser.utils.log_with_timepoints('_capture_log')
+    @utils.prepost_method('reset_synth')
+    @utils.log_with_timepoints('_capture_log')
     def _capture_loop(self, event_groups, test_period, amp_rel_thres,
                       max_xruns):
         """The event-sending and capturing occurs here, after prep."""
@@ -435,16 +502,12 @@ class SynthInterfaceClient(ExtendedJackClient):
             time.sleep(test_period)
 
     def drop_captured(self):
-        """Return the audio data captured in the ringbuffer.
+        """Return the audio data from the ringbuffer.
 
         Returns:
-            captured (np.ndarray): JACK audio
+            captured (np.ndarray): JACK audio buffers.
         """
-        blocks = []
-        buffer_fmt = self.__audiobuffer.buffer_format
-        while self.__audiobuffer.n_blocks:
-            block = self.__audiobuffer.read_block()
-            blocks.append([struct.unpack(buffer_fmt, b) for b in block])
+        blocks = self.__audiobuffer.get_all_blocks()
         captured = np.array(blocks, dtype=np.float32).swapaxes(0, 1)
         return captured
 
