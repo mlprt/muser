@@ -9,10 +9,8 @@ capture endpoints and buffer overrun/underrun events.
 import copy
 import itertools
 import os
-import queue
 import re
 import struct
-import threading
 import time
 import jack
 import numpy as np
@@ -122,7 +120,7 @@ class AudioRingBuffer(object):
     BUFFER_FORMAT = '{:d}' + FRAME_FORMAT
 
     def __init__(self, jack_client, buffer_minutes, channels,
-                 tmp_dir='/tmp/muser/tmp'):
+                 dump_path='/tmp/muser/tmp'):
         self.jack_client = jack_client
         self.buffer_seconds = 60.0 * buffer_minutes
         self.channels = channels
@@ -132,18 +130,17 @@ class AudioRingBuffer(object):
         self.block_format = channels * self.buffer_format
         self.block_bytes = struct.calcsize(self.block_format)
 
-        self.__ringbuffer = jack.RingBuffer(self.blocks * self.block_bytes)
-        self.__active = False
+        self.ringbuffer = jack.RingBuffer(self.blocks * self.block_bytes)
+        self._active = False
 
-        self.tmp_dir = tmp_dir
-        self._tmp_filepath = os.path.join(tmp_dir,
-                                          '{}-dump{{}}'.format(id(self)))
+        self.tmp_dir = dump_path
+        dump_name_format = '{}-dump{{}}'.format(id(self))
+        self.tmp_filepath = os.path.join(dump_path, dump_name_format)
         os.makedirs(self.tmp_dir, exist_ok=True)
-        self.__dumps = 0
-        self.__dump_queue = queue.Queue()
-        self.__dump_thread = threading.Thread(target=self.__dump)
-        self.__dump_thread.daemon = True
-        self.__lock = threading.Lock()
+        self.ringbuffer_dumper = utils.FileDumper(
+            path=dump_path,
+            name_format="{}-dump{{}}".format(id(self)),
+        )
 
     def write_block(self, buffers):
         """If ringbuffer is active, write buffers for a single block.
@@ -158,13 +155,14 @@ class AudioRingBuffer(object):
         if not len(buffers) == self.channels:
             raise ValueError("Number of buffers passed for block write not "
                              "equal to number of ringbuffer channels")
-        if self.__active:
+        if self._active:
             data = b''.join(buffer_ for buffer_ in buffers)
-            self.__ringbuffer.write(data)
-        if self.__ringbuffer.write_space < self.block_bytes:
-            dump = self.__ringbuffer.peek(self.__ringbuffer.read_space)
-            self.__dump_queue.put(dump)
-            self.__ringbuffer.read_advance(self.__ringbuffer.read_space)
+            self.ringbuffer.write(data)
+        if self.ringbuffer.write_space < self.block_bytes:
+            dump_bytes = self.ringbuffer.read_space
+            dump = self.ringbuffer.peek(dump_bytes)
+            self.ringbuffer_dumper.queue.put(dump)
+            self.ringbuffer.read_advance(dump_bytes)
 
     def read_block(self):
         """Read a single block's buffers from the ringbuffer.
@@ -172,14 +170,13 @@ class AudioRingBuffer(object):
         Returns:
             buffers (List[buffer]): JACK CFFI buffers for a single audio block.
         """
-        block = self.__ringbuffer.read(self.block_bytes)
-        buffers = utils.bytes_split(block, self.buffer_bytes)
-        return buffers
+        block = self.ringbuffer.read(self.block_bytes)
+        return block
 
     def get_all_blocks(self):
         """Return all blocks captured by the ringbuffer.
 
-        Reads, unpacks, and appends all blocks dumped to files, then unpacks
+        Fetches, unpacks, and appends all blocks dumped to files, then unpacks
         and appends all blocks remaining in the ringbuffer.
 
         Returns:
@@ -187,67 +184,57 @@ class AudioRingBuffer(object):
                 Shape is ``[n_blocks, channels, jack_client.blocksize]``.
         """
         blocks = []
-        dumps = self.__dumps
-        while self.__dumps:
-            filepath = self._tmp_filepath.format(dumps - self.__dumps)
-            with open(filepath, 'rb') as dumpfile:
-                dump_blocks = utils.bytes_split(dumpfile.read(),
-                                                self.block_bytes)
-                for block in dump_blocks:
-                    buffers = utils.bytes_split(block, self.buffer_bytes)
-                    blocks.append(utils.unpack_elements(self.buffer_format,
-                                                        buffers))
-            self.__dumps -= 1
-        while self.n_blocks:
-            block = self.read_block()
-            blocks.append(utils.unpack_elements(self.buffer_format, block))
+        dumps = self.ringbuffer_dumper.get_all_dumps()
+        for dump in dumps:
+            dump_blocks = utils.bytes_split(dump, self.block_bytes)
+            blocks.extend(self._block_to_values(block) for block in dump_blocks)
+        while self.n_blocks(dumped=False):
+            blocks.append(self._block_to_values(self.read_block()))
         return blocks
 
-    def __dump(self):
-        """Thread that dumps blocks queued by ``write_block()``."""
-        while True:
-            filepath = self._tmp_filepath.format(self.__dumps)
-            dump = self.__dump_queue.get(block=True)
-            with open(filepath, 'wb') as dumpfile:
-                dumpfile.write(dump)
-            self.__dumps += 1
-            self.__dump_queue.task_done()
+    def _block_to_values(self, block):
+        buffers = utils.bytes_split(block, self.buffer_bytes)
+        values = utils.unpack_elements(self.buffer_format, buffers)
+        return values
 
     def reset(self):
-        """Empty the ringbuffer. Not thread safe."""
-        self.__ringbuffer.reset()
+        """Empty the ringbuffer."""
+        self.ringbuffer.read_advance(self.ringbuffer.read_space)
 
     def activate(self):
         """Enable writes of incoming buffers to ringbuffer.
 
         Starts the thread that dumps to file, if necessary.
         """
-        self.__active = True
-        if not self.__dump_thread.is_alive():
-            self.__dump_thread.start()
-        self.__dumps = 0
+        self._active = True
+        if not self.ringbuffer_dumper.active:
+            self.ringbuffer_dumper.thread.start()
 
     def deactivate(self):
         """Disable writes of incoming buffers to ringbuffer."""
-        self.__active = False
+        self._active = False
 
     @property
     def active(self):
         """bool: Whether incoming buffers are being written."""
-        return self.__active
+        return self._active
 
     @property
     def last_block(self):
         """memoryview: Copy of last stored block."""
-        last_block = self.__ringbuffer.read_buffers[0][-self.block_bytes:]
+        last_block = self.ringbuffer.read_buffers[0][-self.block_bytes:]
         return memoryview(bytes(last_block)).cast(self.FRAME_FORMAT)
 
     @property
-    def n_blocks(self, dumps=True):
+    def dumped_blocks(self):
+        """int: Number of blocks that have been dumped to files."""
+        return self.ringbuffer_dumper.dumps * self.blocks
+
+    def n_blocks(self, dumped=True):
         """int: Number of blocks stored in ringbuffer, and dumped to files."""
-        n_blocks = self.__ringbuffer.read_space // self.block_bytes
-        if dumps:
-            n_blocks += self.__dumps * self.__ringbuffer.size // self.block_bytes
+        n_blocks = self.ringbuffer.read_space // self.block_bytes
+        if dumped:
+            n_blocks += self.dumped_blocks
         return n_blocks
 
 

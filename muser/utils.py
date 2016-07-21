@@ -1,7 +1,10 @@
 """ Utility functions. """
 
 import functools
+import os
+import queue
 import struct
+import threading
 import time
 import numpy as np
 import peakutils
@@ -158,14 +161,14 @@ def prepost_method(method_name, *method_args, **method_kwargs):
     return prepost_method_decorator
 
 
-def get_peaks(y, x, thres):
+def get_peaks(y_vectors, x_vector, thres):
     """Return the peaks in data that exceed a relative threshold."""
     try:
-        peaks_idx = [peakutils.indexes(ch, thres=thres) for ch in y]
-        peaks = [(x[idx], y[i][idx]) for i, idx in enumerate(peaks_idx)]
+        peaks_idx = [peakutils.indexes(ch, thres=thres) for ch in y_vectors]
+        peaks = [(x_vector[idx], y_vectors[i][idx])
+                 for i, idx in enumerate(peaks_idx)]
     except TypeError:  # amp not iterable
-        return get_peaks([y], x, thres=thres)
-
+        return get_peaks([y_vectors], x_vector, thres=thres)
     return peaks
 
 
@@ -238,3 +241,60 @@ def bytes_split(bytes_, length):
 def unpack_elements(element_format, byte_elements):
     """Unpack each ``bytes`` element in an iterable with a single format."""
     return [struct.unpack(element_format, element) for element in byte_elements]
+
+
+class Threader(object):
+    """Manages execution of a method in a new thread."""
+    def __init__(self, method, daemon=True):
+        self.thread = threading.Thread(target=method)
+        self.thread.daemon = daemon
+        self.lock = threading.Lock()
+        self.queue = queue.Queue()
+
+
+class FileDumper(Threader):
+    """Dumps data to files using a new thread.
+
+    Args:
+        path (str): The path to write to write the dumps.
+        name_format (str): Format string for dump filenames.
+            Should contain a single field for the dump-index.
+        block_get (bool): Wait for queue entries before dumping?
+    """
+    def __init__(self, path, name_format, block_get=True):
+        super().__init__(method=self.dump, daemon=True)
+        self._dumps = 0
+        self.block_get = block_get
+        self.path = path
+        self.name_format = name_format
+        self.path_format = os.path.join(self.path, self.name_format)
+
+    def dump(self):
+        """Threaded; waits for queued dumps and writes them to files."""
+        while True:
+            dump = self.queue.get(block=self.block_get)
+            dump_name = self.name_format.format(self._dumps)
+            dump_path = os.path.join(self.path, dump_name)
+            with open(dump_path, 'wb') as dump_file:
+                dump_file.write(dump)
+            self._dumps += 1
+            self.queue.task_done()
+
+    def get_all_dumps(self):
+        """Read and return data from all dumped files."""
+        dumps = []
+        for i_dump in range(self._dumps):
+            dump_path = self.path_format.format(i_dump)
+            with open(dump_path, 'rb') as dump_file:
+                dumps.append(dump_file.read())
+        return dumps
+
+    @property
+    def dumps(self):
+        """int: Number of file dumps committed."""
+        return self._dumps
+
+    @property
+    def active(self):
+        """bool: Whether the dump thread has been started."""
+        return self.thread.is_alive()
