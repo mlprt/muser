@@ -18,7 +18,7 @@ import numpy as np
 
 import muser.utils
 
-N_PITCHES = 127
+N_PITCHES = 128
 VELOCITY_LO = 0
 VELOCITY_HI = 127
 VELOCITY_LIMS = (VELOCITY_LO, VELOCITY_HI + 1)
@@ -65,10 +65,6 @@ def notation_to_notes(notation):
 def random_note(pitch=None, pitch_range='midi', velocity=None,
                 velocity_lims=VELOCITY_LIMS):
     """Return a ``music21.note.Note`` with specified or randomized attributes.
-
-    TODO: Check music21 API and use existing functions as much as possible.
-    ``music21.midi.translate`` has relevant functions but will need to
-    implement MIDI note durations (i.e. event times passed with events).
 
     Args:
         pitch (int or str): Pitch of the returned ``music21.note.Note``.
@@ -133,35 +129,43 @@ def chord_to_velocity_vector(chord):
     chord_velocity = chord.volume.velocity
     if chord_velocity is None:
         chord_velocity = 1.0
-    velocity_vector = midi_velocity_vector()
-    velocity_vector[[(p.midi - 1) for p in chord.pitches]] = chord_velocity
-    return velocity_vector
+    vector = velocity_vector()
+    vector[[(p.midi - 1) for p in chord.pitches]] = chord_velocity
+    return vector
 
 
 def note_to_velocity_vector(note):
     """Return a MIDI pitch vector for a music21 Note object."""
-    velocity_vector = chord_to_velocity_vector(music21.chord.Chord([note]))
-    return velocity_vector
+    vector = chord_to_velocity_vector(music21.chord.Chord([note]))
+    return vector
 
 
-def random_velocity_vector(pitches, pitch_range='midi', velocity=None,
-                           velocity_lims=VELOCITY_LIMS):
+def random_velocity_vector(n_pitches, pitch_range='midi', velocity=(0, 127)):
     """Return a random velocity vector.
 
     Args:
-        pitches (int): Number of pitches in the velocity vector.
+        n_pitches (int): Number of pitches in the velocity vector.
+            If function is given: assigns call to function as ``n_pitches``.
         pitch_range (iterable or string): Vector of MIDI pitches for
             random selection.
-        velocity (int): MIDI velocity of returned chord.
-            Chosen randomly if ``None`` (default).
-        velocity_lims (tuple): Limits for random assignment of velocity.
+        velocity (int or tuple): MIDI velocities of returned chord.
+            If min-max tuple is given: random velocities in range.
+            If a number constant is given: constant velocity.
     Returns:
-        velocity_vector (np.ndarray): Vector of velocities of each MIDI pitch
+        vector (np.ndarray): Velocities of each MIDI pitch/note number.
     """
-    chord = random_chord(chord_size=pitches, pitch_range=pitch_range,
-                         velocity=velocity, velocity_lims=velocity_lims)
-    velocity_vector = chord_to_velocity_vector(chord)
-    return velocity_vector
+    pitch_range = muser.utils.key_check(pitch_range, PITCH_RANGES, 'lower')
+    try:
+        n_pitches = n_pitches()
+    except TypeError:
+        pass
+    pitches = np.random.choice(pitch_range, n_pitches, replace=False)
+    vector = velocity_vector(pitch_range)
+    try:
+        vector[pitches] = np.random.randint(*velocity, pitches)
+    except TypeError:
+        vector[pitches] = velocity
+    return vector
 
 
 def midi_all_notes_off(midi_basic=False, pitch_range='midi'):
@@ -184,7 +188,7 @@ def midi_all_notes_off(midi_basic=False, pitch_range='midi'):
                           CONTROL_BYTES['ALL_NOTES_OFF'], 0),))
 
 
-def vector_to_midi_events(status, velocity_vector):
+def vector_to_midi_events(status, vector):
     """ Return MIDI event parameters for given velocity vector.
 
     Status can be specified as one of the keys in ``STATUS_BYTES``.
@@ -197,8 +201,8 @@ def vector_to_midi_events(status, velocity_vector):
         chord_events (np.ndarray): MIDI event parameters, one event per row.
     """
     status = muser.utils.key_check(status, STATUS_BYTES, 'upper')
-    pitches = np.flatnonzero(velocity_vector)
-    velocities = velocity_vector[pitches] * VELOCITY_HI
+    pitches = np.flatnonzero(vector)
+    velocities = vector[pitches] * VELOCITY_HI
     chord_events = np.zeros((3, len(pitches)), dtype=np.uint8)
     chord_events[0] = status
     chord_events[1] = pitches
@@ -248,9 +252,10 @@ def continuous_control(data_byte1, channel=1):
                             channel=channel)
 
 
-def midi_velocity_vector():
+def velocity_vector(pitch_range='midi'):
     """Returns a velocity vector of zeros for all MIDI pitches."""
-    return np.zeros(PITCH_RANGES['midi'][1])
+    pitch_range = muser.utils.key_check(pitch_range, PITCH_RANGES, 'lower')
+    return np.zeros_like(pitch_range)
 
 
 def beat_bias(beat_float, timesig, beat_biases):
