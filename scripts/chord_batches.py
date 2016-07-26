@@ -5,6 +5,7 @@ produced during the MIDI playback and capture process.
 """
 
 import cProfile
+import datetime
 import os
 import pstats
 import time
@@ -17,30 +18,32 @@ import muser.sequencer as sequencer
 import muser.utils as utils
 
 rnd = np.random.RandomState()
+date = datetime.datetime.now().strftime("%y%m%d-%Hh%M")
 
-# User and synth parameters
+# Synth and file configuration
 synth_name = 'Pianoteq'
 synth_reset_event = (0xB0, 0, 0)
 data_dir = '/tmp/muser/chord_batches'
-pickle_paths = os.path.join(data_dir, 'chords_batch{}.pickle')
-wav_out = True
-wav_paths = os.path.join(data_dir, 'batch{}-chord{}.wav')
-print_details = True
+wav_out = False
 profile_capture = False
+
+# Paths and filenames
+output_dir = os.path.join(data_dir, date)
+os.makedirs(output_dir, exist_ok=True)
+pickle_paths = os.path.join(output_dir, 'chords_batch{}.pickle')
+wav_paths = os.path.join(output_dir, 'wav', 'batch{}-chord{}.wav')
+log_path = os.path.join(output_dir, 'log')
 profile_names = 'capture_events-batch{}_chord{}-profile'
-
-
-os.makedirs(data_dir, exist_ok=True)
 
 # Batch generation parameters
 chord_size = lambda: rnd.randint(1, 4)
 velocity_lims = (30, 128)
-batch_size = 64
-batches = 1
+batch_size = 2
+batches = 2
 
 # Recording parameters
 chord_init_silence = 0.1  # >0 to prevent reset overlap...
-chord_time = 5.0
+chord_time = 1.0
 chord_release_time = 0.0
 
 # chord batches structure and random generation
@@ -92,12 +95,18 @@ if profile_capture:
     profile = pstats.Stats(name).strip_dirs()
     profile.sort_stats('time').print_stats(10)
 
-if print_details:
-    xrun_print_end = ', at:' if client.n_xruns else '.'
-    print("{} total Xruns{}".format(client.n_xruns, xrun_print_end))
-    for xrun in client.xruns - start_clock:
-        print('{:.4f} s'.format(xrun[0]))
-    print("\nCapture timepoints (seconds):")
-    utils.print_logs_entryexit(client.capture_log, output_labels={None: 'Xrun'},
-                               ref_clock=start_clock, header=('Start', 'End'),
-                               figs=(10, 4))
+log_str += "Captured {} batches of {} chords, at [s]:\n".format(batches,
+                                                                batch_size)
+log_str += utils.logs_entryexit(client.capture_log,
+                                output_labels={None: 'Xrun'},
+                                ref_clock=start_clock,
+                                header=('Start', 'End'))
+xrun_print_end = ', at:' if client.n_xruns else '.'
+log_str += "\n\n{} total Xruns{}\n".format(client.n_xruns, xrun_print_end)
+for xrun in client.xruns - start_clock:
+    log_str += '{:10.4f} s\n'.format(xrun[0])
+
+print('\n' + log_str)
+
+with open(log_path, 'w') as log:
+    log.write(log_str)

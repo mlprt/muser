@@ -118,9 +118,9 @@ def log_with_timepoints(record_attr):
     return log_with_timepoints_decorator
 
 
-def print_logs_entryexit(logs, output_labels=None, ref_clock=0,
+def logs_entryexit(logs, output_labels=None, ref_clock=0,
                          header=('Enter [s]', 'Exit [s]'), figs=(10, 4)):
-    """Print list of logged function entry and exit times.
+    """Formatted string of logged function entry and exit times.
 
     Args:
         logs (List[dict]): Call logs as returned by ``log_with_timepoints``.
@@ -129,13 +129,17 @@ def print_logs_entryexit(logs, output_labels=None, ref_clock=0,
             Should be the result of a recent call to ``time.perf_counter()``.
         header (iterable): Column headers for printout.
         figs (iterable): Number of total figures and decimals to report.
+
+    Returns:
+        log_str (str): Formatted string of logged entry and exit times.
     """
+    log_str = ''
     if output_labels is None:
         output_labels = {}
-    title_form = '{{}}{{:>{figs}}}{{:>{figs}}}'.format(figs=figs[0])
-    record_form = '{{:{figs}.{decs}f}}{{:{figs}.{decs}f}} {{}}'.format(
+    title_form = '\n{{:>{figs}}}{{:>{figs}}}'.format(figs=figs[0])
+    record_form = '\n{{:{figs}.{decs}f}}{{:{figs}.{decs}f}} {{}}'.format(
         figs=figs[0], decs=figs[1])
-    print(title_form.format('\n', *header))
+    log_str += title_form.format(*header)
     for log in logs:
         call_entry = log['enter_clock'] - ref_clock
         call_exit = log['exit_clock'] - ref_clock
@@ -143,8 +147,8 @@ def print_logs_entryexit(logs, output_labels=None, ref_clock=0,
             output_label = output_labels[log['output']]
         except (TypeError, KeyError):
             output_label = ''
-        print(record_form.format(call_entry, call_exit, output_label))
-    print('\n')
+        log_str += record_form.format(call_entry, call_exit, output_label)
+    return log_str
 
 
 def prepost_method(method_name, *method_args, **method_kwargs):
@@ -222,8 +226,8 @@ def get_batches(get_member, batches, batch_size, member_args=(),
     """
     if member_kwargs is None:
         member_kwargs = {}
-    batch = get_series(get_member, batch_size, *member_args, **member_kwargs)
-    batches = series(batch, batches)
+    batch_func = get_series(get_member, batch_size, *member_args, **member_kwargs)
+    batches = series(batch_func, batches)
     return batches
 
 
