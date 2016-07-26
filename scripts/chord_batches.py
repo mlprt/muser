@@ -6,6 +6,7 @@ produced during the MIDI playback and capture process.
 
 import cProfile
 import datetime
+import json
 import os
 import pstats
 import time
@@ -20,64 +21,75 @@ import muser.utils as utils
 rnd = np.random.RandomState()
 date = datetime.datetime.now().strftime("%y%m%d-%Hh%M")
 
-# Synth and file configuration
-synth_name = 'Pianoteq'
-synth_reset_event = (0xB0, 0, 0)
-data_dir = '/tmp/muser/chord_batches'
-wav_out = False
+# Basic configuration
+out_dir = '/tmp/muser/chord_batches'
+wav_out = True
 profile_capture = False
 
-# Paths and filenames
-output_dir = os.path.join(data_dir, date)
-os.makedirs(output_dir, exist_ok=True)
-pickle_paths = os.path.join(output_dir, 'chords_batch{}.pickle')
-wav_paths = os.path.join(output_dir, 'wav', 'batch{}-chord{}.wav')
-log_path = os.path.join(output_dir, 'log')
-profile_names = 'capture_events-batch{}_chord{}-profile'
-
-# Batch generation parameters
-chord_size = lambda: rnd.randint(1, 4)
-velocity_lims = (30, 128)
-batch_size = 2
+# Chord generation and capture parameters
 batches = 2
-
-# Recording parameters
-chord_init_silence = 0.1  # >0 to prevent reset overlap...
-chord_time = 1.0
-chord_release_time = 0.0
-
-# chord batches structure and random generation
+batch_size = 2
 chord_gen = sequencer.random_velocity_vector
-member_kwargs = {'n_pitches': chord_size, 'velocity': velocity_lims}
+chord_size = lambda: rnd.randint(1, 4)
+velocity = (30, 128)
+init_silence = 0.1
+chord_time = 1.0
+release_time = 0.0
+
+# Synthesizer parameters
+pianoteq_stereo = dict(
+    name='Pianoteq55',
+    midi_inports=['Pianoteq55:midi_in'],
+    outports=['Pianoteq55:out_1', 'Pianoteq55:out_2'],
+    reset=(0xB0, 0, 0),
+)
+
+# File name and path formats
+out_subdir = os.path.join(out_dir, date)
+os.makedirs(out_subdir, exist_ok=True)
+names = dict(
+    pickle='batch{}.pickle',
+    wav='batch{}-chord{}.wav',
+    start_log='params.json',
+    end_log='end_log',
+    capture_profile='capture_events-batch{}_chord{}-profile',
+)
+paths = {k: os.path.join(out_subdir, name) for k, name in names.items()}
+
+# Write parameter log for monitors
+with open(paths['start_log'], 'w') as start_log:
+    params = {'paths': paths, 'batches': batches, 'batch_size': batch_size,
+              'times': [init_silence, chord_time, release_time]}
+    start_log.write(json.dumps(params))
+
+
+#
 chord_dtype = np.dtype([('velocity_vector', np.float32, sequencer.N_PITCHES),
                         ('captured_buffers', object)])
 batch = np.ndarray([batch_size], dtype=chord_dtype)
 
 # JACK client initialization
-client = live.SynthInterfaceClient.from_synthname(synth_name=synth_name,
-                                                  channels=['out_1', 'out_2'])
-client.synth_config['reset'] = synth_reset_event
+client = live.SynthInterfaceClient(synth_config=pianoteq_stereo)
 samplerate = client.samplerate
 
 with client:
     client.connect_synth()
     start_clock = time.perf_counter()
     for i_batch in range(batches):
-        batch['velocity_vector'] = [chord_gen(**member_kwargs)
+        batch['velocity_vector'] = [chord_gen(chord_size, velocity=velocity)
                                     for _ in range(batch_size)]
         for i_chord, chord in enumerate(batch):
-            init_pause = {'events': None, 'duration': chord_init_silence}
+            init_pause = {'events': None, 'duration': init_silence}
             #
             velocity_vector = chord['velocity_vector']
             notes_on = sequencer.vector_to_midi_events('ON', velocity_vector)
             on_events = {'events': notes_on, 'duration': chord_time}
             notes_off = sequencer.vector_to_midi_events('OFF', velocity_vector)
-            off_events = {'events': notes_off, 'duration': chord_release_time}
+            off_events = {'events': notes_off, 'duration': release_time}
             #
             event_groups = [init_pause, on_events, off_events]
             if profile_capture:
-                name_i = os.path.join(data_dir,
-                                      profile_names.format(i_batch, i_chord))
+                name_i = paths['capture_profile'].format(i_batch, i_chord)
                 cProfile.run('client.capture_events(event_groups)', name_i)
             else:
                 client.capture_events(event_groups)
@@ -85,18 +97,18 @@ with client:
 
             if wav_out:
                 snd = audio.buffers_to_snd(chord['captured_buffers'])
-                wav_path = wav_paths.format(i_batch, i_chord)
+                wav_path = paths['wav'].format(i_batch, i_chord)
                 scipy.io.wavfile.write(wav_path, samplerate, snd)
 
-        batch.dump(pickle_paths.format(i_batch))
+        batch.dump(paths['pickle'].format(i_batch))
 
 if profile_capture:
-    name = os.path.join(data_dir, profile_names.format(0, 0))
+    name = paths['capture_profile'].format(0, 0)
     profile = pstats.Stats(name).strip_dirs()
     profile.sort_stats('time').print_stats(10)
 
-log_str += "Captured {} batches of {} chords, at [s]:\n".format(batches,
-                                                                batch_size)
+log_str = "Captured {} batches of {} chords, at [s]:\n".format(batches,
+                                                               batch_size)
 log_str += utils.logs_entryexit(client.capture_log,
                                 output_labels={None: 'Xrun'},
                                 ref_clock=start_clock,
@@ -108,5 +120,5 @@ for xrun in client.xruns - start_clock:
 
 print('\n' + log_str)
 
-with open(log_path, 'w') as log:
-    log.write(log_str)
+with open(paths['end_log'], 'w') as end_log:
+    end_log.write(log_str)
