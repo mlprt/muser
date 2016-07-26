@@ -25,8 +25,8 @@ VELOCITY_LIMS = (VELOCITY_LO, VELOCITY_HI + 1)
 """Basic MIDI constants."""
 
 STATUS_BYTES = dict(
-    NOTE_ON=0x90,
-    NOTE_OFF=0x80,
+    NOTE_ON=0x90, ON=0x90,
+    NOTE_OFF=0x80, OFF=0x80,
     CONTROL=0xB0,
 )
 CONTROL_BYTES = dict(
@@ -140,7 +140,7 @@ def note_to_velocity_vector(note):
     return vector
 
 
-def random_velocity_vector(n_pitches, pitch_range='midi', velocity=(0, 127)):
+def random_velocity_vector(n_pitches=1, pitch_range='midi', velocity=None):
     """Return a random velocity vector.
 
     Args:
@@ -149,7 +149,7 @@ def random_velocity_vector(n_pitches, pitch_range='midi', velocity=(0, 127)):
         pitch_range (iterable or string): Vector of MIDI pitches for
             random selection.
         velocity (int or tuple): MIDI velocities of returned chord.
-            If min-max tuple is given: random velocities in range.
+            If ``None``: random velocities in [0, 1).
             If a number constant is given: constant velocity.
     Returns:
         vector (np.ndarray): Velocities of each MIDI pitch/note number.
@@ -162,9 +162,9 @@ def random_velocity_vector(n_pitches, pitch_range='midi', velocity=(0, 127)):
     pitches = np.random.choice(pitch_range, n_pitches, replace=False)
     vector = velocity_vector(pitch_range)
     try:
-        vector[pitches] = np.random.randint(*velocity, pitches)
+        vector[pitches,] = np.random.rand(n_pitches)
     except TypeError:
-        vector[pitches] = velocity
+        vector[pitches,] = velocity
     return vector
 
 
@@ -252,10 +252,10 @@ def continuous_control(data_byte1, channel=1):
                             channel=channel)
 
 
-def velocity_vector(pitch_range='midi'):
+def velocity_vector(pitch_range='midi', dtype=np.float32):
     """Returns a velocity vector of zeros for all MIDI pitches."""
     pitch_range = muser.utils.key_check(pitch_range, PITCH_RANGES, 'lower')
-    return np.zeros_like(pitch_range)
+    return np.zeros_like(pitch_range, dtype=dtype)
 
 
 def beat_bias(beat_float, timesig, beat_biases):
