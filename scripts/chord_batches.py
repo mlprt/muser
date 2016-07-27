@@ -56,12 +56,6 @@ names = dict(
 )
 paths = {k: os.path.join(out_subdir, name) for k, name in names.items()}
 
-# Write parameter log for monitors
-with open(paths['start_log'], 'w') as start_log:
-    params = {'paths': paths, 'batches': batches, 'batch_size': batch_size,
-              'times': [init_silence, chord_time, release_time]}
-    start_log.write(json.dumps(params))
-
 
 #
 chord_dtype = np.dtype([('velocity_vector', np.float32, sequencer.N_PITCHES),
@@ -70,7 +64,14 @@ batch = np.ndarray([batch_size], dtype=chord_dtype)
 
 # JACK client initialization
 client = live.SynthInterfaceClient(synth_config=pianoteq_stereo)
-samplerate = client.samplerate
+blocksize, samplerate = client.blocksize, client.samplerate
+
+# Write parameter log for monitors
+with open(paths['start_log'], 'w') as start_log:
+    params = {'paths': paths, 'samplerate': samplerate, 'blocksize': blocksize,
+              'batches': batches, 'batch_size': batch_size,
+              'times': [init_silence, chord_time, release_time]}
+    start_log.write(json.dumps(params))
 
 with client:
     client.connect_synth()
