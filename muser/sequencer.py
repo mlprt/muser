@@ -1,4 +1,4 @@
-"""Music structure generation and manipulation.
+"""Musical entity representation and manipulation.
 
 MIDI message bytes are defined by the `MMA MIDI Specifications`_ for the sake
 of compatibility with the many synthesizers and applications that adhere.
@@ -22,7 +22,7 @@ N_PITCHES = 128
 VELOCITY_LO = 0
 VELOCITY_HI = 127
 VELOCITY_LIMS = (VELOCITY_LO, VELOCITY_HI + 1)
-"""Basic MIDI constants."""
+"""MIDI constants."""
 
 STATUS_BYTES = dict(
     NOTE_ON=0x90, ON=0x90,

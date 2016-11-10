@@ -1,4 +1,4 @@
-""" Utility functions. """
+""" Utility classes and functions. """
 
 import functools
 import os
@@ -7,56 +7,100 @@ import struct
 import threading
 import time
 import numpy as np
-import peakutils
 
 
-def amp_to_decibels(amp):
-    """Converts amplitude to decibel units."""
-    amp_db = 10.0 * np.log10(np.absolute(amp) ** 2)
-    return amp_db
+class Threader(object):
+    """Manages execution of a method in a new thread."""
+    def __init__(self, method, daemon=True):
+        self.thread = threading.Thread(target=method)
+        self.thread.daemon = daemon
+        self.lock = threading.Lock()
+        self.queue = queue.Queue()
 
 
-def freq_to_hertz(samplerate):
-    """Returns function that converts frequency per-sample to per-second."""
-    def to_hertz(freq):
-        return np.absolute(freq * samplerate)
-    return to_hertz
-
-
-def pitch_to_hertz(midi_pitch):
-    """Converts MIDI note number to its specified audio frequency (Hz).
-
-    Based on 440 Hz concert pitch corresponding to MIDI pitch number of 69,
-    and the doubling of frequency with each octave (12 semitones or MIDI note
-    numbers).
+class FileDumper(Threader):
+    """Dumps data to sequential files using a new thread.
 
     Args:
-        midi_pitch (int): MIDI note number.
-
-    Returns:
-        hz (float): Audio frequency specified by the MIDI note number.
+        path (str): The directory to write the dumps to.
+        name_format (str): Format string for dump filenames.
+            Should contain a single field for the dump index.
+        block_get (bool): Wait for queue entries before dumping?
     """
-    pitch_hertz = 440 * (2 ** ((midi_pitch - 69) / 12))
-    return pitch_hertz
+    def __init__(self, path, name_format, block_get=True):
+        super().__init__(method=self.dump, daemon=True)
+        self._dumps = 0
+        self.block_get = block_get
+        self.path = path
+        self.name_format = name_format
+        self.path_format = os.path.join(self.path, self.name_format)
+
+    def dump(self):
+        """Threaded; waits for queued dumps and writes them to files."""
+        while True:
+            dump = self.queue.get(block=self.block_get)
+            dump_name = self.name_format.format(self._dumps)
+            dump_path = os.path.join(self.path, dump_name)
+            with open(dump_path, 'wb') as dump_file:
+                dump_file.write(dump)
+            self._dumps += 1
+            self.queue.task_done()
+
+    def get_all_dumps(self):
+        """Read and return data from all dumped files."""
+        dumps = []
+        for i_dump in range(self._dumps):
+            dump_path = self.path_format.format(i_dump)
+            with open(dump_path, 'rb') as dump_file:
+                dumps.append(dump_file.read())
+        return dumps
+
+    @property
+    def dumps(self):
+        """int: Number of file dumps committed."""
+        return self._dumps
+
+    @property
+    def active(self):
+        """bool: Whether the dump thread has been started."""
+        return self.thread.is_alive()
 
 
-def time_to_sample(time_, samplerate):
-    """Return sample index closest to given time.
+class FileMonitor(Threader):
+    """Watches a directory for sequential data files, then reads to a Queue.
+    
+    Data files are expected in sequence, according to an index. So tries to
+    read path_fmt.format(0), and after success waits for path_fmt.format(1),
+    and so on.
 
     Args:
-        time (float): Time relative to the start of sample indexing.
-        samplerate (int): Rate of sampling for the recording.
-
-    Returns:
-        sample (int): Index of the sample taken nearest to ``time``.
+        path_fmt (str): File path format string.  
+        file_loader (function): Passed a datafile path, returns data.
+        log_path (str): Path to log file containing a `dict`.
+        log_key (str): Log key paired with the breaking value for `i_file`.  
     """
-    sample = int(time_ * samplerate)
-    return sample
+    def __init__(self, path_fmt, file_loader, log_path, log_key):
+        super().__init__(method=self.get_data, daemon=True)
+        self.path_fmt = path_fmt
+        self.file_loader = file_loader
+        self.log_path = log_path
+        self.log_key = log_key
 
-
-def sample_to_time(sample, samplerate):
-    """Returns times corresponding to samples in a series."""
-    return sample / float(samplerate)
+    def get_data(self):
+        """Continuously attempt to read next data file in the sequence."""
+        i_file = 0
+        while True:
+            try:
+                path = self.path_fmt.format(i_file)
+                data = self.file_loader(path)
+                self.queue.put(data)
+                i_file += 1
+            except FileNotFoundError:
+                if os.path.exists(self.log_path):
+                    with open(self.log_path, 'r') as log_file:
+                        log_dict = eval(log_file.readline())
+                    if log_dict[self.log_key] == i_file:
+                        break
 
 
 def wait_while(toggle_attr):
@@ -165,25 +209,8 @@ def prepost_method(method_name, *method_args, **method_kwargs):
     return prepost_method_decorator
 
 
-def get_peaks(y_vectors, x_vector, thres):
-    """Return the peaks in data that exceed a relative threshold."""
-    try:
-        peaks_idx = [peakutils.indexes(ch, thres=thres) for ch in y_vectors]
-        peaks = [(x_vector[idx], y_vectors[i][idx])
-                 for i, idx in enumerate(peaks_idx)]
-    except TypeError:  # amp not iterable
-        return get_peaks([y_vectors], x_vector, thres=thres)
-    return peaks
-
-
 def nearest_pow(num, base, rule=round):
-    """Given a base, return power nearest to num.
-
-    Parameters:
-        num (float):
-        base (float):
-        rule (function):
-    """
+    """Given a base, return the exponent of the power nearest to num."""
     return int(rule(np.log10(num) / np.log10(base)))
 
 
@@ -269,58 +296,52 @@ def unpack_elements(element_fmt, byte_elements):
     return [struct.unpack(element_fmt, element) for element in byte_elements]
 
 
-class Threader(object):
-    """Manages execution of a method in a new thread."""
-    def __init__(self, method, daemon=True):
-        self.thread = threading.Thread(target=method)
-        self.thread.daemon = daemon
-        self.lock = threading.Lock()
-        self.queue = queue.Queue()
+def amp_to_decibels(amp):
+    """Converts amplitude to decibel units."""
+    amp_db = 10.0 * np.log10(np.absolute(amp) ** 2)
+    return amp_db
 
 
-class FileDumper(Threader):
-    """Dumps data to files using a new thread.
+def freq_to_hertz(samplerate):
+    """Returns function that converts frequency per-sample to per-second."""
+    def to_hertz(freq):
+        return np.absolute(freq * samplerate)
+    return to_hertz
+
+
+def pitch_to_hertz(midi_pitch):
+    """Converts MIDI note number to its specified audio frequency (Hz).
+
+    Based on 440 Hz concert pitch corresponding to MIDI pitch number of 69,
+    and the doubling of frequency with each octave (12 semitones or MIDI note
+    numbers).
 
     Args:
-        path (str): The path to write to write the dumps.
-        name_format (str): Format string for dump filenames.
-            Should contain a single field for the dump-index.
-        block_get (bool): Wait for queue entries before dumping?
+        midi_pitch (int): MIDI note number.
+
+    Returns:
+        hz (float): Audio frequency specified by the MIDI note number.
     """
-    def __init__(self, path, name_format, block_get=True):
-        super().__init__(method=self.dump, daemon=True)
-        self._dumps = 0
-        self.block_get = block_get
-        self.path = path
-        self.name_format = name_format
-        self.path_format = os.path.join(self.path, self.name_format)
+    pitch_hertz = 440 * (2 ** ((midi_pitch - 69) / 12))
+    return pitch_hertz
 
-    def dump(self):
-        """Threaded; waits for queued dumps and writes them to files."""
-        while True:
-            dump = self.queue.get(block=self.block_get)
-            dump_name = self.name_format.format(self._dumps)
-            dump_path = os.path.join(self.path, dump_name)
-            with open(dump_path, 'wb') as dump_file:
-                dump_file.write(dump)
-            self._dumps += 1
-            self.queue.task_done()
 
-    def get_all_dumps(self):
-        """Read and return data from all dumped files."""
-        dumps = []
-        for i_dump in range(self._dumps):
-            dump_path = self.path_format.format(i_dump)
-            with open(dump_path, 'rb') as dump_file:
-                dumps.append(dump_file.read())
-        return dumps
+def time_to_sample(time_, samplerate):
+    """Return sample index closest to given time.
 
-    @property
-    def dumps(self):
-        """int: Number of file dumps committed."""
-        return self._dumps
+    Args:
+        time (float): Time relative to the start of sample indexing.
+        samplerate (int): Rate of sampling for the recording.
 
-    @property
-    def active(self):
-        """bool: Whether the dump thread has been started."""
-        return self.thread.is_alive()
+    Returns:
+        sample (int): Index of the sample taken nearest to ``time``.
+    """
+    sample = int(time_ * samplerate)
+    return sample
+
+
+def sample_to_time(sample, samplerate):
+    """Returns times corresponding to samples in a series."""
+    return sample / float(samplerate)
+
+

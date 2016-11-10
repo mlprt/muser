@@ -1,4 +1,8 @@
-"""Real-time music performance and capture.
+"""Live MIDI synthesizer interface with audio capture.
+
+The interface is pseudo-real-time due to Python's garbage collection; if the 
+interface is called upon in an application with large or frequent memory 
+operations, JACK audio buffer under/overruns may result.
 
 Includes extensions of ``jack`` that allow automatic registration of multiple
 client ports, easier capturing of buffer arrays from an arbitrary number of
@@ -239,7 +243,7 @@ class AudioRingBuffer(object):
 
 
 class ExtendedJackClient(jack.Client):
-    """A JACK client with added management features.
+    """A `jack` client with added management features.
 
     Defines a default Xrun callback that logs Xrun details, and properties
     for tracking of Xruns and access to commonly calculated quantities.
@@ -335,7 +339,7 @@ class SynthInterfaceClient(ExtendedJackClient):
             uninterrupted by a call to ``self.drop_capture()``.
     """
 
-    def __init__(self, synth_config, audiobuffer_time=None):
+    def __init__(self, synth_config, audiobuffer_time=1):
         super().__init__(name="Muser-{} Interface".format(synth_config['name']))
         self._register_ports(midi_outports=len(synth_config['midi_inports']),
                              inports=len(synth_config['outports']))
@@ -348,7 +352,7 @@ class SynthInterfaceClient(ExtendedJackClient):
         self.set_process_callback(self.__process)
 
     @classmethod
-    def from_synthname(cls, synth_name, audiobuffer_time=None):
+    def from_synthname(cls, synth_name, channels=None, audiobuffer_time=1):
         """ Return an interface to the active synth with the provided name.
 
         Searches active JACK ports for client names containing ``synth_name``,
@@ -375,14 +379,16 @@ class SynthInterfaceClient(ExtendedJackClient):
             midi_inports=[],
             outports=[],
         )
-        regex = re.compile(synth_name, re.IGNORECASE)
+        client_regex = re.compile(synth_name, re.IGNORECASE)
         with jack.Client('tmp') as client:
             for port in client.get_ports():
-                if regex.search(port.name.split(':')[0]):
+                port_name = port.name.split(':')
+                if client_regex.search(port_name[0]):
                     if port.is_midi and port.is_input:
                         synth_config['midi_inports'].append(port.name)
                     if port.is_audio and port.is_output:
-                        synth_config['outports'].append(port.name)
+                        if channels is None or port_name[1] in channels:
+                            synth_config['outports'].append(port.name)
             synth_config['name'] = synth_config['outports'][0].split(':')[0]
         return cls(synth_config, audiobuffer_time=audiobuffer_time)
 
@@ -480,7 +486,6 @@ class SynthInterfaceClient(ExtendedJackClient):
             if (self.n_xruns - init_xruns) > max_xruns:
                 return
             last_block_max = max(self.__audiobuffer.last_block)
-            print(last_block_max)
             if last_block_max > amp_max:
                 amp_max = last_block_max
                 amp_thres = amp_max * amp_rel_thres

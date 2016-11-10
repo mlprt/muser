@@ -1,9 +1,5 @@
-"""File input and output.
+"""Audio file I/O and audio data manipulation."""
 
-Conversion of vector representations of notes and chords to MIDI events.
-"""
-
-import struct
 import numpy as np
 import scipy.io.wavfile
 

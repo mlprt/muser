@@ -1,4 +1,4 @@
-"""Fourier analysis of sampled audio."""
+"""Fourier analysis of audio data."""
 
 import numpy as np
 import pyopencl as cl
@@ -38,11 +38,11 @@ def fft1d_collapse(data, fft=np.fft.fft):
     more than 1 non-transformed dimension.
 
     Args:
-      data (np.ndarray):
-      fft (function):
+      data (np.ndarray): Contains time-domain data in last dimension.
+      fft (function): Function returning discrete Fourier transform.
 
     Returns:
-      np.ndarray:
+      np.ndarray: Contains frequency-domain data in last dimension.
     """
     dims = data.shape
     data_batch1D = data.reshape(np.prod(dims[:-1]), dims[-1])
