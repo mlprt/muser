@@ -18,7 +18,6 @@ import struct
 import time
 import jack
 import numpy as np
-import rtmidi
 
 import muser.sequencer as sequencer
 import muser.utils as utils
@@ -436,7 +435,10 @@ class SynthInterfaceClient(ExtendedJackClient):
             cpu_load_thres (float): Wait for CPU load reported by JACK to
                 drop below this threshold before re-attempting capture.
                 Higher CPU load is associated with increased chance of Xruns.
+                If 'auto', assigns the initial value report by JACK. 
         """
+        if cpu_load_thres == 'auto':
+            cpu_load_thres = self.cpu_load()
         test_period = 1.0 / test_rate
         # pause briefly to ensure inter-capture xruns are logged
         time.sleep(0.1)
@@ -600,51 +602,6 @@ class Synth(ExtendedJackClient):
         else:
             for i_chan in channels_idx:
                 self.synth_functions[i_chan] = []
-
-
-def init_rtmidi_out(name="MuserRtmidiClient", outport=0):
-    """Return an ``rtmidi`` output client with opened port.
-
-    Args:
-        name (str): The name of the ``rtmidi`` client.
-        outport (int): Virtual output port number to initialize.
-
-    Returns:
-        midi_out (rtmidi.MidiOut): ``rtmidi`` output client.
-    """
-    midi_out = rtmidi.MidiOut(name=name)
-    if midi_out.get_ports():
-        midi_out.open_port(outport)
-    else:
-        midi_out.open_virtual_port("out_{}".format(outport))
-    return midi_out
-
-
-def send_events(rtmidi_out, events):
-    """Send a series of MIDI events out through ``rtmidi``.
-
-    Events are sent without pause, so intended for sending series of events
-    that should be heard simultaneously (chords).
-
-    A single event (not nested in a list of events) may be passed as ``events``.
-
-    Args:
-        rtmidi_out (rtmidi.MidiOut): The `rtmidi` output client.
-        events: MIDI event data.
-    """
-    try:
-        iter(events[0])
-    except TypeError:
-        events = (events,)
-    for event in events:
-        rtmidi_out.send_message(event)
-
-
-def get_rtmidi_send_events(rtmidi_out):
-    """Returns a client-specific ``send_events``."""
-    def rtmidi_send_events(events):
-        return send_events(rtmidi_out, events)
-    return rtmidi_send_events
 
 
 def unpack_midi_event(event_in):
