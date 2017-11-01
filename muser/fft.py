@@ -1,4 +1,7 @@
-"""Fourier analysis of audio data."""
+"""Fourier analysis of audio data.
+
+Uses OpenCL for GPU processing of large datasets.
+"""
 
 import numpy as np
 import pyopencl as cl

@@ -1,5 +1,7 @@
 """ Create music objects in music21 and output as live MIDI.
 
+NOTE: Out-of-date with current project structure (no longer using rtmidi); will not run.
+
 During sends, destroys rtmidi.MidiOut interface after `KeyboardInterrupt` or `SystemExit` to preclude JACK artifacts.
 """
 

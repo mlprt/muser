@@ -18,10 +18,6 @@ Live interface to JACK MIDI synthesizers with audio capture and manipulation of 
 - moviepy: for creation of animated plots
 - peakutils: for detection of peaks in 1D data
 
-##### Machine learning scripts
-- keras
-- [TensorFlow](https://www.tensorflow.org/)
-
 ### Modules
 #### Core
 ##### muser.audio
